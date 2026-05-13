@@ -1,10 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Wed May 13 13:49:31 2026
-
-@author: U120137
-"""
-
 import pdfplumber
 import pandas as pd
 import re
@@ -12,50 +5,93 @@ import re
 class IASPdfExtractor:
     def __init__(self, pdf_path: str):
         self.pdf_path = pdf_path
+        
+        # Zdefiniowany nagłówek na podstawie dostarczonego wzoru
+        self.expected_headers =[
+            "Numer w rejestrze",
+            "Data wpisu",
+            "Imię i Nazwisko / Nazwa firmy",
+            "Numer KRS",
+            "NIP",
+            "Rodzaj świadczonych usług",
+            "Informacja o zawieszeniu działalności",
+            "Informacja o zakończeniu działalności"
+        ]
 
     def extract_table(self) -> pd.DataFrame:
         all_rows =[]
         
         with pdfplumber.open(self.pdf_path) as pdf:
             for page in pdf.pages:
-                # extract_table zwraca listę list (wiersze i kolumny)
+                # pdfplumber zwraca tabelę jako listę wierszy (gdzie każdy wiersz to lista komórek)
                 table = page.extract_table()
                 if table:
-                    all_rows.extend(table)
+                    for row in table:
+                        # Sprawdzamy, czy to wiersz nagłówkowy (powtarzający się na każdej stronie)
+                        # row[0] to "Numer w rejestrze"
+                        first_cell = str(row[0]).strip() if row[0] else ""
+                        if "Numer w rejestrze" in first_cell:
+                            continue # Pomijamy wiersz, bo to nagłówek
+                        
+                        cleaned_row =[]
+                        for i, cell in enumerate(row):
+                            if cell is None:
+                                cleaned_row.append(None)
+                            elif i == 5:
+                                # Kolumna 5: "Rodzaj świadczonych usług"
+                                # pdfplumber zwraca załamania wierszy z PDF jako "\n".
+                                # Zamieniamy "\n" na spację, aby mieć ciągły tekst bez łamania wierszy 
+                                # w pliku CSV, ale zachowujemy wszystkie inne spacje.
+                                cell_text = str(cell).replace('\n', ' ')
+                                # Usuwamy podwójne spacje, które mogły powstać na styku
+                                cell_text = re.sub(r'\s+', ' ', cell_text).strip()
+                                cleaned_row.append(cell_text)
+                            else:
+                                # Pozostałe kolumny - standardowe czyszczenie
+                                cleaned_row.append(str(cell).replace('\n', ' ').strip())
+                                
+                        # Dodajemy tylko wiersze, które nie są całkowicie puste
+                        if any(cleaned_row):
+                            all_rows.append(cleaned_row)
         
         if not all_rows:
             raise ValueError("Nie znaleziono tabeli w pliku PDF.")
 
-        # Pierwszy wiersz zazwyczaj zawiera nagłówki (np. "L.p.", "Nazwa", "NIP", "KRS")
-        # Należy oczyścić nagłówki z białych znaków (np. \n)
-        headers = [str(h).replace('\n', ' ').strip() if h else f"Col_{i}" for i, h in enumerate(all_rows[0])]
+        # Tworzenie DataFrame
+        df = pd.DataFrame(all_rows)
         
-        df = pd.DataFrame(all_rows[1:], columns=headers)
-        
-        # Czyszczenie: usunięcie pustych wierszy
-        df.dropna(how='all', inplace=True)
-        
+        # Ochrona przed sytuacją, gdyby pdfplumber skleił lub rozdzielił kolumny inaczej
+        if len(df.columns) == len(self.expected_headers):
+            df.columns = self.expected_headers
+        else:
+            print(f"OSTRZEŻENIE: Znaleziono {len(df.columns)} kolumn w PDF, a oczekiwano {len(self.expected_headers)}.")
+            # Zabezpieczenie: przypisz tyle nagłówków ile się da
+            assigned_headers = self.expected_headers[:len(df.columns)]
+            # Jeśli kolumn jest więcej, nazwij je Col_X
+            if len(df.columns) > len(self.expected_headers):
+                assigned_headers.extend([f"Dodatkowa_{i}" for i in range(len(df.columns) - len(self.expected_headers))])
+            df.columns = assigned_headers
+
         return df
 
-    def clean_krs_column(self, df: pd.DataFrame, krs_col_name: str = 'Numer KRS') -> pd.DataFrame:
+    def clean_krs_column(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Próbuje zlokalizować kolumnę z KRS, wyciąga 10-cyfrowy numer, 
-        filtruje tylko te podmioty, które faktycznie go posiadają (np. spółki z o.o., S.A.).
-        Osoby fizyczne prowadzące działalność (CEIDG) zostaną pominięte w kontekście API KRS.
+        Wyszukuje i czyści numery KRS z kolumny "Numer KRS".
+        Pozwala to odfiltrować np. osoby fizyczne z pustym KRS-em.
         """
-        # Znajdź kolumnę, która w nazwie ma "KRS" (wielkość liter bez znaczenia)
-        krs_col = next((col for col in df.columns if 'KRS' in str(col).upper()), None)
+        krs_col_name = 'Numer KRS'
         
-        if not krs_col:
-            # Fallback jeśli nie ma w nagłówku, zwróć pustą listę
+        if krs_col_name not in df.columns:
+            # Zabezpieczenie w razie nieprzewidzianej zmiany układu tabeli
             df['clean_krs'] = None
             return df
 
-        # Wyciąganie samego numeru (dokładnie 10 cyfr)
         def extract_krs(text):
-            if not text: return None
+            if pd.isna(text) or not text: 
+                return None
+            # Szukamy dokładnie 10 cyfr (nawet jeśli ktoś wpisał spacje w środku KRS-u w PDF)
             match = re.search(r'\b\d{10}\b', str(text).replace(' ', ''))
             return match.group(0) if match else None
 
-        df['clean_krs'] = df[krs_col].apply(extract_krs)
+        df['clean_krs'] = df[krs_col_name].apply(extract_krs)
         return df

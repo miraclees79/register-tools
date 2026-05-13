@@ -27,53 +27,82 @@ class KrsApiEnricher:
             return {"error": str(e)}
 
     def parse_krs_json(self, json_data: dict) -> dict:
-        """Ekstrahuje podstawowe informacje (adres, status, osoby, udziałowcy) z JSONa KRS."""
+        """Ekstrahuje podstawowe informacje z JSONa z API KRS."""
         if "error" in json_data:
-            return {"status": json_data["error"]}
+            return {
+                "krs_status": json_data["error"],
+                "likwidacja": "", "krs_adres": "", "osoby_decyzyjne": "", "udzialowcy": ""
+            }
 
         try:
             odpis = json_data.get("odpis", {})
             dane = odpis.get("dane", {})
             
             # 1. Status podmiotu
-            stan = odpis.get("naglowekA", {}).get("stanPozycji", "Brak danych")
+            # stanPozycji = 1 oznacza podmiot wpisany do rejestru (aktywny)
+            stan = odpis.get("naglowekA", {}).get("stanPozycji")
             status = "Aktywny" if stan == 1 else "Wykreślony/Inny"
 
-            # Sprawdzenie czy w Dziale 6 (likwidacja) coś jest
+            # 2. Informacja o likwidacji
+            # Dział 6 dla aktywnych spółek bez likwidacji to zazwyczaj puste {}
             dzial6 = dane.get("dzial6", {})
-            is_liquidated = "Tak" if dzial6.get("likwidacja") else "Nie"
+            is_liquidated = "Tak" if dzial6 else "Nie"
 
-            # 2. Adres
+            # 3. Formatowanie adresu
             adres_data = dane.get("dzial1", {}).get("siedzibaIAdres", {}).get("adres", {})
-            adres = f"{adres_data.get('ulica', '')} {adres_data.get('nrDomu', '')}, {adres_data.get('kodPocztowy', '')} {adres_data.get('miejscowosc', '')}"
+            ulica = adres_data.get("ulica", "")
+            nr_domu = adres_data.get("nrDomu", "")
+            nr_lokalu = adres_data.get("nrLokalu", "")
+            miejscowosc = adres_data.get("miejscowosc", "")
+            kod_pocztowy = adres_data.get("kodPocztowy", "")
+            
+            # Konstrukcja np. "Krucza 16/22"
+            lokal_str = f"/{nr_lokalu}" if nr_lokalu else ""
+            ulica_str = f"{ulica} {nr_domu}{lokal_str}".strip() if ulica else f"{nr_domu}{lokal_str}".strip()
+            
+            adres = f"{ulica_str}, {kod_pocztowy} {miejscowosc}".strip(" ,")
 
-            # 3. Osoby decyzyjne (Reprezentacja - Dział 2)
-            reprezentacja = dane.get("dzial2", {}).get("reprezentacja", {}).get("podmiot", {})
+            # 4. Osoby decyzyjne (Dział 2 - Zarząd / Reprezentacja)
             osoby_decyzyjne =[]
-            if isinstance(reprezentacja, dict) and "osobyWchodzaceWSkladOrganu" in reprezentacja:
-                osoby = reprezentacja["osobyWchodzaceWSkladOrganu"]
-                for osoba in osoby:
-                    imiona = osoba.get("imiona", {}).get("imie", "")
-                    nazwisko = osoba.get("nazwisko", {}).get("nazwiskoCzlonDrugi", osoba.get("nazwisko", {}).get("nazwiskoCzlonPierwszy", ""))
-                    funkcja = osoba.get("funkcjaWOrganie", "")
-                    osoby_decyzyjne.append(f"{imiona} {nazwisko} ({funkcja})")
+            sklad_zarzadu = dane.get("dzial2", {}).get("reprezentacja", {}).get("sklad",[])
+            for osoba in sklad_zarzadu:
+                imie = osoba.get("imiona", {}).get("imie", "")
+                nazwisko_dict = osoba.get("nazwisko", {})
+                # Obsługa nazwisk jednoczłonowych i wieloczłonowych
+                nazwisko = nazwisko_dict.get("nazwiskoICzlon", nazwisko_dict.get("nazwiskoCzlonPierwszy", ""))
+                funkcja = osoba.get("funkcjaWOrganie", "Członek organu")
+                
+                osoby_decyzyjne.append(f"{imie} {nazwisko} ({funkcja})".strip())
 
-            # 4. Udziałowcy (Dział 1 - Wspólnicy Sp. z o.o.)
-            # Uwaga: struktura JSONa różni się dla S.A., PSA itp. Tu pokazuję Sp. z o.o. jako najczęstszą.
-            wspolnicy_data = dane.get("dzial1", {}).get("wspolnicySpZoo", [])
+            # 5. Udziałowcy (Wspólnicy Sp. z o.o.)
+            # Uwaga: Dla spółek akcyjnych (S.A.) ten klucz to np. `jedynyAkcjonariusz` lub brak danych.
             udzialowcy =[]
+            wspolnicy_data = dane.get("dzial1", {}).get("wspolnicySpzoo",[])
             for w in wspolnicy_data:
-                imie = w.get("imiona", {}).get("imie", "")
-                nazwisko = w.get("nazwisko", {}).get("nazwiskoCzlonPierwszy", w.get("nazwa", ""))
-                udzialowcy.append(f"{imie} {nazwisko}".strip())
+                posiadane_udzialy = w.get("posiadaneUdzialy", "")
+                nazwa_firmy = w.get("nazwa", "")
+                
+                if nazwa_firmy:
+                    # Udziałowcem jest inny podmiot (Spółka z o.o., LTD itp.)
+                    udzialowcy.append(f"{nazwa_firmy} [{posiadane_udzialy}]")
+                else:
+                    # Udziałowcem jest osoba fizyczna
+                    imie = w.get("imiona", {}).get("imie", "")
+                    nazwisko_dict = w.get("nazwisko", {})
+                    nazwisko = nazwisko_dict.get("nazwiskoICzlon", "")
+                    
+                    udzialowcy.append(f"{imie} {nazwisko} [{posiadane_udzialy}]".strip())
 
             return {
                 "krs_status": status,
                 "likwidacja": is_liquidated,
-                "krs_adres": adres.strip(", "),
-                "osoby_decyzyjne": "; ".join(osoby_decyzyjne),
-                "udzialowcy": "; ".join(udzialowcy)
+                "krs_adres": adres,
+                "osoby_decyzyjne": " | ".join(osoby_decyzyjne),
+                "udzialowcy": " | ".join(udzialowcy)
             }
 
         except Exception as e:
-            return {"status": f"Błąd parsowania: {str(e)}"}
+            return {
+                "krs_status": f"Błąd parsowania: {str(e)}",
+                "likwidacja": "", "krs_adres": "", "osoby_decyzyjne": "", "udzialowcy": ""
+            }
