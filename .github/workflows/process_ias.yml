@@ -7,8 +7,8 @@ on:
   
   # 2. Automatyczne uruchomienie wg harmonogramu (np. w każdy poniedziałek o 03:00 UTC)
   # Przydatne, aby regularnie odświeżać statusy podmiotów w KRS
-  schedule:
-    - cron: '0 3 * * 1'
+  # schedule:
+  #  - cron: '0 3 * * 1'
     
   # 3. Uruchomienie przy każdym zmergowaniu/pushu do głównej gałęzi, 
   # ale tylko jeśli zmienił się kod lub lista zależności
@@ -16,8 +16,8 @@ on:
     branches:
       - main
     paths:
-      - 'src/**'
-      - 'requirements.txt'
+      # - 'src/**'
+      # - 'requirements.txt'
       - 'data/raw/**' # Uruchomi się też, gdy zaktualizujesz bazowy PDF
 
 jobs:
