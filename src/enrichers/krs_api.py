@@ -7,6 +7,7 @@ Created on Wed May 13 13:49:53 2026
 
 import requests
 import time
+import traceback
 
 class KrsApiEnricher:
     # Zmiana z OdpisAktualny na OdpisPelny (daje dostęp do historii zmian)
@@ -197,13 +198,17 @@ class KrsApiEnricher:
                 "historyczni_udzialowcy": " | ".join(historyczni_udzialowcy)
             }
 
-        except Exception as e:
+        except Exception:
+            # traceback.format_exc() wyciągnie pełen opis błędu, w tym nr linii
+            error_details = traceback.format_exc()
+            print(f"BŁĄD PARSOWANIA JSON KRS:\n{error_details}")
+            
             return {
-                "krs_status": f"Błąd parsowania: {str(e)}",
+                "krs_status": "Błąd struktury danych (sprawdź logi)",
                 "likwidacja": "", 
                 "krs_adres_aktualny": "", 
                 "krs_adresy_historyczne": "",
-                "osoby_decyzyjne": "", 
+                "osoby_decyzyjne": "",
                 "historyczne_osoby_decyzyjne": "",
                 "udzialowcy": "",
                 "historyczni_udzialowcy": ""
