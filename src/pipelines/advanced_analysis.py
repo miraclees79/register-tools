@@ -4,7 +4,7 @@ import pandas as pd
 import requests
 import re
 from bs4 import BeautifulSoup
-from duckduckgo_search import DDGS
+from duckduckgo_search import DDGS 
 from tqdm import tqdm
 from google import genai  # Nowe, wspierane SDK Google
 

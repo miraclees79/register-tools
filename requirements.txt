@@ -1,7 +1,7 @@
 pandas
 pdfplumber
 requests
-google-genai
-duckduckgo-search
+ddgs
 beautifulsoup4
 tqdm
+google-genai
