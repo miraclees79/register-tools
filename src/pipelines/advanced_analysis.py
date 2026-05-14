@@ -6,6 +6,7 @@ import requests
 from bs4 import BeautifulSoup
 from duckduckgo_search import DDGS
 import google.generativeai as genai
+from tqdm import tqdm
 
 # Inicjalizacja modelu Gemini
 # Ustaw zmienną środowiskową: export GEMINI_API_KEY="twój-klucz"
@@ -329,7 +330,7 @@ def run_advanced_pipeline():
     df['ai_summary'] = ""
 
     # Aby nie zużyć limitów (i czasu), analizujemy tylko pierwsze 10 podmiotów (usuń [:10] dla pełnego przebiegu)
-    for index, row in df.head(10).iterrows():
+    for index, row in tqdm(df.iterrows(), total=len(df), desc="Analiza WWW i AI"):
         company_name = str(row['Imię i Nazwisko / Nazwa firmy'])
         print(f"\n[{index+1}] Badanie: {company_name}")
         
