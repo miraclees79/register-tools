@@ -33,7 +33,7 @@ class KrsApiEnricher:
         """Ekstrahuje informacje z Odpisu Pełnego API KRS wraz z datami historycznymi."""
         if "error" in json_data:
             return {
-                "krs_status": json_data.get(key="error", default=""),
+                "krs_status": json_data.get("error", ""),
                 "likwidacja": "", 
                 "krs_adres_aktualny": "", 
                 "krs_adresy_historyczne": "",
@@ -61,7 +61,8 @@ class KrsApiEnricher:
             def get_data_wpisu(nr_wpisu: str) -> str:
                 if not nr_wpisu:
                     return ""
-                return data_wpisow_map.get(key=str(nr_wpisu), default=f"wpis {nr_wpisu}")
+                # data_wpisow_map to standardowy słownik, więc wywołujemy get pozycyjnie
+                return data_wpisow_map.get(str(nr_wpisu), f"wpis {nr_wpisu}")
 
             # 1. Status podmiotu
             stan = naglowekP.get("stanPozycji")
