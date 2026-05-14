@@ -1,3 +1,6 @@
 pandas
 pdfplumber
 requests
+google-generativeai
+duckduckgo-search
+beautifulsoup4
