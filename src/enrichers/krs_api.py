@@ -26,92 +26,152 @@ class KrsApiEnricher:
         except requests.RequestException as e:
             return {"error": str(e)}
 
-    def parse_krs_json(self, json_data: dict) -> dict:
+    def parse_krs_json(
+        self, 
+        json_data: dict
+    ) -> dict:
+        """Ekstrahuje informacje z Odpisu Pełnego API KRS wraz z datami historycznymi."""
         if "error" in json_data:
             return {
-                "krs_status": json_data["error"],
-                "likwidacja": "", "krs_adres_aktualny": "", "krs_adresy_historyczne": "",
-                "osoby_decyzyjne": "", "udzialowcy": ""
+                "krs_status": json_data.get(key="error", default=""),
+                "likwidacja": "", 
+                "krs_adres_aktualny": "", 
+                "krs_adresy_historyczne": "",
+                "osoby_decyzyjne": "", 
+                "historyczne_osoby_decyzyjne": "",
+                "udzialowcy": "",
+                "historyczni_udzialowcy": ""
             }
 
         try:
             odpis = json_data.get("odpis", {})
             dane = odpis.get("dane", {})
+            naglowekP = odpis.get("naglowekP", {})
             
+            # 0. MAPOWANIE DAT WPISÓW
+            # Tworzymy słownik, który pod numerem wpisu przechowuje datę, np. {"1": "18.11.2021"}
+            wpisy = naglowekP.get("wpis", [])
+            data_wpisow_map = {}
+            for wpis_slownik in wpisy:
+                nr = str(wpis_slownik.get("numerWpisu"))
+                data = wpis_slownik.get("dataWpisu", "Brak daty")
+                data_wpisow_map[nr] = data
+
+            # Funkcja pomocnicza do pobierania daty
+            def get_data_wpisu(nr_wpisu: str) -> str:
+                if not nr_wpisu:
+                    return ""
+                return data_wpisow_map.get(key=str(nr_wpisu), default=f"wpis {nr_wpisu}")
+
             # 1. Status podmiotu
-            stan = odpis.get("naglowekA", {}).get("stanPozycji")
+            stan = naglowekP.get("stanPozycji")
             status = "Aktywny" if stan == 1 else "Wykreślony/Inny"
 
             # 2. Informacja o likwidacji
             dzial6 = dane.get("dzial6", {})
-            is_liquidated = "Tak" if dzial6 else "Nie"
+            is_liquidated = "Tak" if dzial6 and dzial6.get("rozwiazanieUniewaznienie", {}).get("okreslenieOkolicznosci") else "Nie"
 
-            # 3. HISTORIA ADRESÓW (Odpis Pełny zwraca listę wpisów)
-            siedziba_i_adres = dane.get("dzial1", {}).get("siedzibaIAdres", [])
-            # Upewniamy się, że to lista (dla spójności)
-            if isinstance(siedziba_i_adres, dict):
-                siedziba_i_adres = [siedziba_i_adres]
-
+            # 3. Historia Adresów
+            siedziba_i_adres = dane.get("dzial1", {}).get("siedzibaIAdres", {})
+            adres_lista = siedziba_i_adres.get("adres", [])
+            
             wszystkie_adresy = []
-            for wpis in siedziba_i_adres:
-                adres_data = wpis.get("adres", {})
-                ulica = adres_data.get("ulica", "")
-                nr_domu = adres_data.get("nrDomu", "")
-                nr_lokalu = adres_data.get("nrLokalu", "")
-                miejscowosc = adres_data.get("miejscowosc", "")
-                kod_pocztowy = adres_data.get("kodPocztowy", "")
+            for wpis_adresu in adres_lista:
+                ulica = wpis_adresu.get("ulica", "")
+                nr_domu = wpis_adresu.get("nrDomu", "")
+                nr_lokalu = wpis_adresu.get("nrLokalu", "")
+                miejscowosc = wpis_adresu.get("miejscowosc", "")
+                kod_pocztowy = wpis_adresu.get("kodPocztowy", "")
                 
                 lokal_str = f"/{nr_lokalu}" if nr_lokalu else ""
                 ulica_str = f"{ulica} {nr_domu}{lokal_str}".strip() if ulica else f"{nr_domu}{lokal_str}".strip()
                 adres_str = f"{ulica_str}, {kod_pocztowy} {miejscowosc}".strip(" ,")
                 
-                # Dodajemy tylko unikalne adresy, by uniknąć duplikatów przy aneksach bez zmiany adresu
                 if adres_str and (not wszystkie_adresy or wszystkie_adresy[-1] != adres_str):
                     wszystkie_adresy.append(adres_str)
 
-            # Rozdzielenie na adres aktualny (zawsze ostatni na liście w KRS) i historię
             krs_adres_aktualny = wszystkie_adresy[-1] if wszystkie_adresy else ""
-            
-            # Jeśli jest więcej niż 1 adres, formatujemy historię jako: "Adres 1 -> Adres 2 -> ..."
             krs_adresy_historyczne = " -> ".join(wszystkie_adresy[:-1]) if len(wszystkie_adresy) > 1 else "Brak zmian adresu"
 
-            # 4. Osoby decyzyjne (wyciągamy tylko z najświeższych wpisów, by uprościć - dla Odpisu Pełnego to zazwyczaj ostatni element listy reprezentacji)
+            # 4. Osoby decyzyjne (Aktualne i historyczne)
             osoby_decyzyjne = []
+            historyczne_osoby_decyzyjne = []
+            
             reprezentacja_lista = dane.get("dzial2", {}).get("reprezentacja", [])
-            if isinstance(reprezentacja_lista, dict):
-                reprezentacja_lista = [reprezentacja_lista]
-                
-            # Bierzemy ostatni (najbardziej aktualny) wpis o reprezentacji
             sklad_zarzadu = reprezentacja_lista[-1].get("sklad", []) if reprezentacja_lista else []
+            
             for osoba in sklad_zarzadu:
-                # W Odpisie Pełnym osoby usunięte z zarządu mogą mieć znacznik wykreślenia
-                if "informacjaOWykresleniu" in osoba:
-                    continue # Pomijamy byłych członków zarządu
-                    
-                imie = osoba.get("imiona", {}).get("imie", "")
-                nazwisko = osoba.get("nazwisko", {}).get("nazwiskoICzlon", osoba.get("nazwisko", {}).get("nazwiskoCzlonPierwszy", ""))
-                funkcja = osoba.get("funkcjaWOrganie", "Członek organu")
-                osoby_decyzyjne.append(f"{imie} {nazwisko} ({funkcja})".strip())
+                nazwisko_historia = osoba.get("nazwisko", [])
+                if not nazwisko_historia:
+                    continue
+                
+                # Zawsze wyciągamy datę wejścia do zarządu i (ewentualnie) wyjścia z zarządu
+                nr_wprow_zarzad = nazwisko_historia[0].get("nrWpisuWprow", "")
+                nr_wykr_zarzad = nazwisko_historia[-1].get("nrWpisuWykr", "")
+                
+                data_wprow_zarzad = get_data_wpisu(nr_wpisu=nr_wprow_zarzad)
+                
+                imie_historia = osoba.get("imiona", [])
+                imie = imie_historia[-1].get("imiona", {}).get("imie", "") if imie_historia else ""
+                
+                nazwisko_dict = nazwisko_historia[-1].get("nazwisko", {})
+                nazwisko = nazwisko_dict.get("nazwiskoICzlon", nazwisko_dict.get("nazwiskoCzlonPierwszy", ""))
+                
+                funkcja_historia = osoba.get("funkcjaWOrganie", [])
+                aktualna_funkcja = funkcja_historia[-1].get("funkcjaWOrganie", "Członek organu") if funkcja_historia else "Członek organu"
+                
+                osoba_str = f"{imie} {nazwisko} ({aktualna_funkcja})".strip()
 
-            # 5. Udziałowcy (też bierzemy najbardziej aktualnych, ignorując wykreślonych)
-            udzialowcy = []
-            wspolnicy_lista = dane.get("dzial1", {}).get("wspolnicySpzoo", [])
-            if isinstance(wspolnicy_lista, dict):
-                wspolnicy_lista = [wspolnicy_lista]
-                
-            for w in wspolnicy_lista:
-                if "informacjaOWykresleniu" in w:
-                    continue # Pomijamy starych udziałowców (sprzedawców "spółki z półki")
-                    
-                posiadane_udzialy = w.get("posiadaneUdzialy", "")
-                nazwa_firmy = w.get("nazwa", "")
-                
-                if nazwa_firmy:
-                    udzialowcy.append(f"{nazwa_firmy} [{posiadane_udzialy}]")
+                if nr_wykr_zarzad:
+                    # Osoba została wykreślona
+                    data_wykr_zarzad = get_data_wpisu(nr_wpisu=nr_wykr_zarzad)
+                    historyczne_osoby_decyzyjne.append(f"{osoba_str} [od {data_wprow_zarzad} do {data_wykr_zarzad}]")
                 else:
-                    imie = w.get("imiona", {}).get("imie", "")
-                    nazwisko = w.get("nazwisko", {}).get("nazwiskoICzlon", "")
-                    udzialowcy.append(f"{imie} {nazwisko} [{posiadane_udzialy}]".strip())
+                    # Osoba jest aktywna w zarządzie
+                    osoby_decyzyjne.append(f"{osoba_str} [od {data_wprow_zarzad}]")
+
+            # 5. Udziałowcy (Aktualni i historyczni)
+            udzialowcy = []
+            historyczni_udzialowcy = []
+            
+            wspolnicy_lista = dane.get("dzial1", {}).get("wspolnicySpzoo", [])
+            
+            for wspolnik in wspolnicy_lista:
+                nazwa_historia = wspolnik.get("nazwa", [])
+                nazwisko_historia = wspolnik.get("nazwisko", [])
+                
+                udzialy_historia = wspolnik.get("posiadaneUdzialy", [])
+                posiadane_udzialy = udzialy_historia[-1].get("posiadaneUdzialy", "") if udzialy_historia else ""
+
+                if nazwa_historia:
+                    # Udziałowiec to inna firma
+                    nazwa_firmy = nazwa_historia[-1].get("nazwa", "")
+                    nr_wprow_udzialy = nazwa_historia[0].get("nrWpisuWprow", "")
+                    nr_wykr_udzialy = nazwa_historia[-1].get("nrWpisuWykr", "")
+                    podmiot_str = f"{nazwa_firmy} [{posiadane_udzialy}]"
+                elif nazwisko_historia:
+                    # Udziałowiec to osoba fizyczna
+                    imie_historia = wspolnik.get("imiona", [])
+                    imie = imie_historia[-1].get("imiona", {}).get("imie", "") if imie_historia else ""
+                    
+                    nazwisko_dict = nazwisko_historia[-1].get("nazwisko", {})
+                    nazwisko = nazwisko_dict.get("nazwiskoICzlon", "")
+                    
+                    nr_wprow_udzialy = nazwisko_historia[0].get("nrWpisuWprow", "")
+                    nr_wykr_udzialy = nazwisko_historia[-1].get("nrWpisuWykr", "")
+                    podmiot_str = f"{imie} {nazwisko} [{posiadane_udzialy}]".strip()
+                else:
+                    continue
+                    
+                data_wprow_udzialy = get_data_wpisu(nr_wpisu=nr_wprow_udzialy)
+
+                if nr_wykr_udzialy:
+                    # Udziałowiec sprzedał/pozbył się udziałów
+                    data_wykr_udzialy = get_data_wpisu(nr_wpisu=nr_wykr_udzialy)
+                    historyczni_udzialowcy.append(f"{podmiot_str} [od {data_wprow_udzialy} do {data_wykr_udzialy}]")
+                else:
+                    # Udziałowiec wciąż aktywny
+                    udzialowcy.append(f"{podmiot_str} [od {data_wprow_udzialy}]")
 
             return {
                 "krs_status": status,
@@ -119,12 +179,19 @@ class KrsApiEnricher:
                 "krs_adres_aktualny": krs_adres_aktualny,
                 "krs_adresy_historyczne": krs_adresy_historyczne,
                 "osoby_decyzyjne": " | ".join(osoby_decyzyjne),
-                "udzialowcy": " | ".join(udzialowcy)
+                "historyczne_osoby_decyzyjne": " | ".join(historyczne_osoby_decyzyjne),
+                "udzialowcy": " | ".join(udzialowcy),
+                "historyczni_udzialowcy": " | ".join(historyczni_udzialowcy)
             }
 
         except Exception as e:
             return {
                 "krs_status": f"Błąd parsowania: {str(e)}",
-                "likwidacja": "", "krs_adres_aktualny": "", "krs_adresy_historyczne": "",
-                "osoby_decyzyjne": "", "udzialowcy": ""
+                "likwidacja": "", 
+                "krs_adres_aktualny": "", 
+                "krs_adresy_historyczne": "",
+                "osoby_decyzyjne": "", 
+                "historyczne_osoby_decyzyjne": "",
+                "udzialowcy": "",
+                "historyczni_udzialowcy": ""
             }
