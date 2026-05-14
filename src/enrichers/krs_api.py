@@ -117,10 +117,15 @@ class KrsApiEnricher:
                 nazwisko_dict = nazwisko_historia[-1].get("nazwisko", {})
                 nazwisko = nazwisko_dict.get("nazwiskoICzlon", nazwisko_dict.get("nazwiskoCzlonPierwszy", ""))
                 
+                identyfikator_historia = osoba.get("identyfikator", [])
+                pesel = identyfikator_historia[-1].get("pesel", "") if identyfikator_historia else ""
+                pesel_str = f" (PESEL: {pesel})" if pesel else ""
+                
                 funkcja_historia = osoba.get("funkcjaWOrganie", [])
                 aktualna_funkcja = funkcja_historia[-1].get("funkcjaWOrganie", "Członek organu") if funkcja_historia else "Członek organu"
                 
-                osoba_str = f"{imie} {nazwisko} ({aktualna_funkcja})".strip()
+                # Dodano pesel_str do wynikowego stringa
+                osoba_str = f"{imie} {nazwisko}{pesel_str} ({aktualna_funkcja})".strip()
 
                 if nr_wykr_zarzad:
                     # Osoba została wykreślona
@@ -157,9 +162,16 @@ class KrsApiEnricher:
                     nazwisko_dict = nazwisko_historia[-1].get("nazwisko", {})
                     nazwisko = nazwisko_dict.get("nazwiskoICzlon", "")
                     
+                    # Pobieranie PESEL-u udziałowca
+                    identyfikator_historia = wspolnik.get("identyfikator", [])
+                    pesel = identyfikator_historia[-1].get("pesel", "") if identyfikator_historia else ""
+                    pesel_str = f" (PESEL: {pesel})" if pesel else ""
+                    
                     nr_wprow_udzialy = nazwisko_historia[0].get("nrWpisuWprow", "")
                     nr_wykr_udzialy = nazwisko_historia[-1].get("nrWpisuWykr", "")
-                    podmiot_str = f"{imie} {nazwisko} [{posiadane_udzialy}]".strip()
+                    
+                    # Dodano pesel_str
+                    podmiot_str = f"{imie} {nazwisko}{pesel_str} [{posiadane_udzialy}]".strip()
                 else:
                     continue
                     

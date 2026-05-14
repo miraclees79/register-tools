@@ -187,6 +187,119 @@ def analyze_address_clusters(
     
     return df
 
+
+def analyze_shareholder_clusters(
+    df: pd.DataFrame
+) -> pd.DataFrame:
+    """
+    Wykrywa klastry powiązań kapitałowych na podstawie obecnych 
+    i historycznych udziałowców (firmy oraz osoby fizyczne maskowane PESELem).
+    """
+    # 1. Zabezpieczenie przed brakami danych (NaN)
+    aktualni_udzialowcy = df['udzialowcy'].fillna(
+        value=''
+    )
+    historyczni_udzialowcy = df['historyczni_udzialowcy'].fillna(
+        value=''
+    )
+    
+    # 2. Połączenie wszystkich powiązań w jeden wspólny ciąg
+    wszyscy_udzialowcy_raw = aktualni_udzialowcy + " | " + historyczni_udzialowcy
+    
+    # 3. Rozbicie ciągu znaków na listę w oparciu o separator
+    df['udzialowcy_lista'] = wszyscy_udzialowcy_raw.str.split(
+        pat=" | "
+    )
+    
+    # 4. Funkcja do czyszczenia danych (usunięcie informacji o kwotach i datach)
+    def clean_shareholders(
+        sh_list: list
+    ) -> list:
+        cleaned_set = set()
+        for sh in sh_list:
+            sh_str = str(sh).strip()
+            if not sh_str or sh_str == "|":
+                continue
+                
+            # Usuwamy wszystko co jest w nawiasach kwadratowych: "[600 UDZIAŁÓW...]" oraz "[od 18.11...]"
+            # Dzięki temu zostaje samo: "SCALE COMPUTING SOLUTIONS LTD" lub "W******* G******** (PESEL: 5**********)"
+            sh_clean = re.sub(
+                pattern=r'\[.*?\]', 
+                repl='', 
+                string=sh_str
+            ).strip()
+            
+            if sh_clean:
+                cleaned_set.add(sh_clean)
+                
+        return list(cleaned_set)
+        
+    df['znormalizowani_udzialowcy'] = df['udzialowcy_lista'].apply(
+        func=clean_shareholders
+    )
+    
+    # 5. Globalne zliczenie wystąpień dla każdego "czystego" udziałowca w rejestrze
+    exploded_sh = df['znormalizowani_udzialowcy'].explode()
+    sh_counts = exploded_sh.value_counts()
+    
+    # 6. Wyciągnięcie najwyższej liczby powiązań dla danej spółki
+    def get_max_sh_cluster(
+        sh_list: list
+    ) -> int:
+        if not sh_list:
+            return 0
+        counts = [sh_counts.get(key=s, default=0) for s in sh_list]
+        return max(counts)
+        
+    # 7. Zbudowanie czytelnego podsumowania (kto konkretnie jest seryjnym udziałowcem)
+    def get_sh_cluster_details(
+        sh_list: list
+    ) -> str:
+        if not sh_list:
+            return ""
+        details = []
+        for s in sh_list:
+            poziom_wystapien = sh_counts.get(key=s, default=0)
+            # Zapisujemy tylko tych, którzy przewijają się przez więcej niż 1 firmę
+            if poziom_wystapien > 1:
+                details.append(f"{s} [występuje w {poziom_wystapien} podmiotach]")
+                
+        if not details:
+            return "Brak powiązań z innymi podmiotami"
+            
+        return " | ".join(details)
+        
+    df['max_powiazania_udzialowca'] = df['znormalizowani_udzialowcy'].apply(
+        func=get_max_sh_cluster
+    )
+    df['powiazani_udzialowcy_szczegoly'] = df['znormalizowani_udzialowcy'].apply(
+        func=get_sh_cluster_details
+    )
+    
+    # 8. Nadanie flagi ryzyka (skalarnej)
+    def assign_sh_risk(
+        cluster_size: int
+    ) -> str:
+        if cluster_size >= 3:
+            return 'Wysokie' # Ten sam udziałowiec w 3+ firmach krypto to silny sygnał
+        elif cluster_size == 2:
+            return 'Średnie'
+        else:
+            return 'Niskie'
+
+    df['ryzyko_powiazan_kapitalowych'] = df['max_powiazania_udzialowca'].apply(
+        func=assign_sh_risk
+    )
+    
+    # 9. Sprzątanie
+    df.drop(
+        columns=['udzialowcy_lista', 'znormalizowani_udzialowcy'], 
+        inplace=True
+    )
+    
+    return df
+
+
 def run_advanced_pipeline():
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
     input_path = os.path.join(base_dir, "data", "processed", "enriched_crypto_register.csv")
@@ -202,7 +315,11 @@ def run_advanced_pipeline():
     # Wypiszmy najpopularniejsze adresy:
     top_addresses = df[df['wielkosc_klastra_adresowego'] > 1]['krs_adres'].unique()
     print(f"Znaleziono {len(top_addresses)} klastrów adresowych (biura obsługujące wiele VASPów).")
-
+    
+    # KROK 1.5: Analiza powiązań udziałowców
+    print("Analiza powiązań udziałowców (kapitałowych)...")
+    df = analyze_shareholder_clusters(df=df)
+    
     # KROK 2: Analiza WWW z użyciem AI
     print("Uruchamianie wyszukiwania i analizy LLM (to może potrwać)...")
     analyzer = WebAnalyzer()
@@ -240,6 +357,8 @@ def run_advanced_pipeline():
     df.drop(columns=['normalized_address'], inplace=True) # usuwamy kolumnę techniczną
     df.to_csv(output_path, index=False, encoding='utf-8')
     print("Zakończono!")
+
+    
 
 if __name__ == "__main__":
     run_advanced_pipeline()
