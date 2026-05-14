@@ -1,20 +1,20 @@
 import os
 import time
 import pandas as pd
-import re
 import requests
 from bs4 import BeautifulSoup
 from duckduckgo_search import DDGS
-import google.generativeai as genai
 from tqdm import tqdm
+from google import genai  # Nowe, wspierane SDK Google
 
-# Inicjalizacja modelu Gemini
-# Ustaw zmienną środowiskową: export GEMINI_API_KEY="twój-klucz"
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# Inicjalizacja klienta Gemini
+GEMINI_API_KEY = os.getenv(key="GEMINI_API_KEY")
+gemini_client = None
+
 if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-    # Gemini 1.5 Flash jest idealny: szybki, tani/darmowy i ma ogromne okno kontekstowe
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    gemini_client = genai.Client(
+        api_key=GEMINI_API_KEY
+    )
 else:
     print("Brak klucza GEMINI_API_KEY. LLM nie zadziała.")
 
@@ -22,59 +22,93 @@ class WebAnalyzer:
     def __init__(self):
         self.ddgs = DDGS()
 
-    def find_website(self, company_name: str) -> str:
-        """Wyszukuje pierwszy pasujący link dla firmy (preferowane polskie wyniki)"""
+    def find_website(
+        self, 
+        company_name: str
+    ) -> str:
         query = f'"{company_name}" krypto OR kryptowaluty OR crypto exchange'
         try:
-            results = list(self.ddgs.text(query, region='pl-pl', max_results=1))
+            results = list(
+                self.ddgs.text(
+                    keywords=query, 
+                    region='pl-pl', 
+                    max_results=1
+                )
+            )
             if results:
-                return results[0].get('href', '')
+                return results[0].get(key='href', default='')
         except Exception as e:
             print(f"Błąd wyszukiwania dla {company_name}: {e}")
         return ""
 
-    def scrape_website_text(self, url: str) -> str:
-        """Pobiera i czyści tekst z podanej strony WWW"""
-        if not url: return ""
+    def scrape_website_text(
+        self, 
+        url: str
+    ) -> str:
+        if not url: 
+            return ""
         try:
-            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-            # Krótki timeout, bo nie chcemy zawiesić pipeline'u
-            response = requests.get(url, headers=headers, timeout=5)
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+            }
+            response = requests.get(
+                url=url, 
+                headers=headers, 
+                timeout=5
+            )
             if response.status_code == 200:
-                soup = BeautifulSoup(response.text, 'html.parser')
-                # Usuwamy skrypty i style
-                for script in soup(["script", "style", "nav", "footer"]):
+                soup = BeautifulSoup(
+                    markup=response.text, 
+                    features='html.parser'
+                )
+                for script in soup(name=["script", "style", "nav", "footer"]):
                     script.extract()
-                text = soup.get_text(separator=' ', strip=True)
-                return text[:5000] # Ograniczamy do 5000 znaków (wystarczy do oceny)
+                text = soup.get_text(
+                    separator=' ', 
+                    strip=True
+                )
+                return text[:5000]
             else:
                 return f"HTTP {response.status_code}"
         except Exception as e:
             return f"Błąd pobierania: {str(e)}"
 
-    def synthesize_with_llm(self, company_name: str, website_text: str) -> str:
-        """Wysyła zebrany tekst do Google Gemini w celu syntezy OSINT"""
-        if not GEMINI_API_KEY: return "Brak klucza API."
+    def synthesize_with_llm(
+        self, 
+        company_name: str, 
+        website_text: str
+    ) -> str:
+        if not gemini_client: 
+            return "Brak klucza API."
         if not website_text or "Błąd" in website_text or "HTTP" in website_text:
             return "Brak zawartości strony do analizy."
 
         prompt = f"""
         Jesteś analitykiem finansowym (OSINT) badającym rynek kryptowalut.
-        Poniżej znajduje się tekst ze strony internetowej podmiotu zarejestrowanego jako VASP (Virtual Asset Service Provider).
+        Poniżej znajduje się tekst ze strony internetowej podmiotu zarejestrowanego jako VASP.
         Nazwa podmiotu: {company_name}
         
         Tekst ze strony:
         {website_text}
         
         Twoje zadanie to odpowiedzieć zwięźle (max 3-4 zdania):
-        1. Jaki jest główny profil działalności tej firmy (kantor online, kantor stacjonarny, giełda, bramka płatnicza, firma consultingowa)?
+        1. Jaki jest główny profil działalności tej firmy?
         2. Czy kierują swoje usługi do klientów detalicznych (B2C) czy instytucjonalnych (B2B)?
-        Jeśli tekst nie zawiera jednoznacznych informacji o profilu krypto, napisz: "Strona nie zawiera wyraźnych informacji o usługach kryptowalutowych."
+        Jeśli tekst nie zawiera jednoznacznych informacji, napisz: "Strona nie zawiera wyraźnych informacji."
         """
         
         try:
-            response = model.generate_content(prompt)
-            return response.text.replace('\n', ' ').strip()
+            # Nowy sposób wywoływania modelu w zaktualizowanej bibliotece
+            response = gemini_client.models.generate_content(
+                model='gemini-1.5-flash',
+                contents=prompt
+            )
+            if response.text:
+                return response.text.replace(
+                    old='\n', 
+                    new=' '
+                ).strip()
+            return "Brak odpowiedzi modelu."
         except Exception as e:
             return f"Błąd LLM: {str(e)}"
 
@@ -301,20 +335,40 @@ def analyze_shareholder_clusters(
     return df
 
 
-def run_advanced_pipeline():
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-    input_path = os.path.join(base_dir, "data", "processed", "enriched_crypto_register.csv")
-    output_path = os.path.join(base_dir, "data", "processed", "osint_crypto_register.csv")
+def run_advanced_pipeline() -> None:
+    base_dir = os.path.dirname(
+        p=os.path.dirname(
+            p=os.path.dirname(
+                p=__file__
+            )
+        )
+    )
+    input_path = os.path.join(
+        base_dir, 
+        "data", 
+        "processed", 
+        "enriched_crypto_register.csv"
+    )
+    output_path = os.path.join(
+        base_dir, 
+        "data", 
+        "processed", 
+        "osint_crypto_register.csv"
+    )
 
     print("Wczytywanie bazy...")
-    df = pd.read_csv(input_path)
+    df = pd.read_csv(
+        filepath_or_buffer=input_path
+    )
 
-    # KROK 1: Analiza adresów (szybkie operacje w Pandas)
     print("Analiza klastrów adresowych...")
-    df = analyze_address_clusters(df)
+    df = analyze_address_clusters(
+        df=df
+    )
     
-    # Wypiszmy najpopularniejsze adresy:
-    top_addresses = df[df['wielkosc_klastra_adresowego'] > 1]['krs_adres'].unique()
+    # NAPRAWIONY BŁĄD KeyError (używamy teraz nowych nazw kolumn dla adresów historycznych)
+    df_filtered_addresses = df[df['najwiekszy_klaster_adresowy'] > 1]
+    top_addresses = df_filtered_addresses['krs_adres_aktualny'].unique()
     print(f"Znaleziono {len(top_addresses)} klastrów adresowych (biura obsługujące wiele VASPów).")
     
     # KROK 1.5: Analiza powiązań udziałowców
@@ -325,41 +379,43 @@ def run_advanced_pipeline():
     print("Uruchamianie wyszukiwania i analizy LLM (to może potrwać)...")
     analyzer = WebAnalyzer()
     
-    # Tworzymy puste kolumny
     df['website_url'] = ""
     df['ai_summary'] = ""
 
-    # Aby nie zużyć limitów (i czasu), analizujemy tylko pierwsze 10 podmiotów (usuń [:10] dla pełnego przebiegu)
-    for index, row in tqdm(df.iterrows(), total=len(df), desc="Analiza WWW i AI"):
+    # Używamy tqdm dla wyświetlania paska postępu
+    for index, row in tqdm(iterable=df.iterrows(), total=len(df), desc="Analiza AI"):
         company_name = str(row['Imię i Nazwisko / Nazwa firmy'])
-        print(f"\n[{index+1}] Badanie: {company_name}")
         
-        # Omijamy osoby fizyczne (brak KRS zazwyczaj oznacza działalność CEIDG, tam trudniej o precyzyjne WWW, ale można włączyć)
         if pd.notna(row['Numer KRS']):
-            url = analyzer.find_website(company_name)
-            print(f" Znaleziono URL: {url}")
+            url = analyzer.find_website(
+                company_name=company_name
+            )
             df.at[index, 'website_url'] = url
             
             if url:
-                text = analyzer.scrape_website_text(url)
-                if len(text) > 50: # Pomyślnie pobrano jakiś tekst
-                    summary = analyzer.synthesize_with_llm(company_name, text)
+                text = analyzer.scrape_website_text(
+                    url=url
+                )
+                if len(text) > 50:
+                    summary = analyzer.synthesize_with_llm(
+                        company_name=company_name, 
+                        website_text=text
+                    )
                     df.at[index, 'ai_summary'] = summary
-                    print(f" AI: {summary[:100]}...")
                 else:
-                    df.at[index, 'ai_summary'] = "Nie udało się pobrać treści strony (blokada / brak tekstu)."
+                    df.at[index, 'ai_summary'] = "Nie udało się pobrać treści strony."
             
-            # Rate limiting API LLM i wyszukiwarki
             time.sleep(4)
         else:
             df.at[index, 'ai_summary'] = "Pominięto (brak KRS)."
 
     print("\nZapisywanie osint_crypto_register.csv...")
-    df.drop(columns=['normalized_address'], inplace=True) # usuwamy kolumnę techniczną
-    df.to_csv(output_path, index=False, encoding='utf-8')
-    print("Zakończono!")
-
-    
+    df.to_csv(
+        path_or_buf=output_path, 
+        index=False, 
+        encoding='utf-8'
+    )
+    print("Zakończono pomyślnie!")
 
 if __name__ == "__main__":
     run_advanced_pipeline()
