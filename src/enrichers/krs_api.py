@@ -9,10 +9,10 @@ import requests
 import time
 
 class KrsApiEnricher:
-    BASE_URL = "https://api-krs.ms.gov.pl/api/krs/OdpisAktualny"
+    # Zmiana z OdpisAktualny na OdpisPelny (daje dostęp do historii zmian)
+    BASE_URL = "https://api-krs.ms.gov.pl/api/krs/OdpisPelny"
 
     def fetch_entity_data(self, krs_number: str) -> dict:
-        """Pobiera odpis aktualny z Rejestru Przedsiębiorców (rejestr=P)"""
         url = f"{self.BASE_URL}/{krs_number}?rejestr=P&format=json"
         
         try:
@@ -27,11 +27,11 @@ class KrsApiEnricher:
             return {"error": str(e)}
 
     def parse_krs_json(self, json_data: dict) -> dict:
-        """Ekstrahuje podstawowe informacje z JSONa z API KRS."""
         if "error" in json_data:
             return {
                 "krs_status": json_data["error"],
-                "likwidacja": "", "krs_adres": "", "osoby_decyzyjne": "", "udzialowcy": ""
+                "likwidacja": "", "krs_adres_aktualny": "", "krs_adresy_historyczne": "",
+                "osoby_decyzyjne": "", "udzialowcy": ""
             }
 
         try:
@@ -39,64 +39,85 @@ class KrsApiEnricher:
             dane = odpis.get("dane", {})
             
             # 1. Status podmiotu
-            # stanPozycji = 1 oznacza podmiot wpisany do rejestru (aktywny)
             stan = odpis.get("naglowekA", {}).get("stanPozycji")
             status = "Aktywny" if stan == 1 else "Wykreślony/Inny"
 
             # 2. Informacja o likwidacji
-            # Dział 6 dla aktywnych spółek bez likwidacji to zazwyczaj puste {}
             dzial6 = dane.get("dzial6", {})
             is_liquidated = "Tak" if dzial6 else "Nie"
 
-            # 3. Formatowanie adresu
-            adres_data = dane.get("dzial1", {}).get("siedzibaIAdres", {}).get("adres", {})
-            ulica = adres_data.get("ulica", "")
-            nr_domu = adres_data.get("nrDomu", "")
-            nr_lokalu = adres_data.get("nrLokalu", "")
-            miejscowosc = adres_data.get("miejscowosc", "")
-            kod_pocztowy = adres_data.get("kodPocztowy", "")
-            
-            # Konstrukcja np. "Krucza 16/22"
-            lokal_str = f"/{nr_lokalu}" if nr_lokalu else ""
-            ulica_str = f"{ulica} {nr_domu}{lokal_str}".strip() if ulica else f"{nr_domu}{lokal_str}".strip()
-            
-            adres = f"{ulica_str}, {kod_pocztowy} {miejscowosc}".strip(" ,")
+            # 3. HISTORIA ADRESÓW (Odpis Pełny zwraca listę wpisów)
+            siedziba_i_adres = dane.get("dzial1", {}).get("siedzibaIAdres", [])
+            # Upewniamy się, że to lista (dla spójności)
+            if isinstance(siedziba_i_adres, dict):
+                siedziba_i_adres = [siedziba_i_adres]
 
-            # 4. Osoby decyzyjne (Dział 2 - Zarząd / Reprezentacja)
-            osoby_decyzyjne =[]
-            sklad_zarzadu = dane.get("dzial2", {}).get("reprezentacja", {}).get("sklad",[])
-            for osoba in sklad_zarzadu:
-                imie = osoba.get("imiona", {}).get("imie", "")
-                nazwisko_dict = osoba.get("nazwisko", {})
-                # Obsługa nazwisk jednoczłonowych i wieloczłonowych
-                nazwisko = nazwisko_dict.get("nazwiskoICzlon", nazwisko_dict.get("nazwiskoCzlonPierwszy", ""))
-                funkcja = osoba.get("funkcjaWOrganie", "Członek organu")
+            wszystkie_adresy = []
+            for wpis in siedziba_i_adres:
+                adres_data = wpis.get("adres", {})
+                ulica = adres_data.get("ulica", "")
+                nr_domu = adres_data.get("nrDomu", "")
+                nr_lokalu = adres_data.get("nrLokalu", "")
+                miejscowosc = adres_data.get("miejscowosc", "")
+                kod_pocztowy = adres_data.get("kodPocztowy", "")
                 
+                lokal_str = f"/{nr_lokalu}" if nr_lokalu else ""
+                ulica_str = f"{ulica} {nr_domu}{lokal_str}".strip() if ulica else f"{nr_domu}{lokal_str}".strip()
+                adres_str = f"{ulica_str}, {kod_pocztowy} {miejscowosc}".strip(" ,")
+                
+                # Dodajemy tylko unikalne adresy, by uniknąć duplikatów przy aneksach bez zmiany adresu
+                if adres_str and (not wszystkie_adresy or wszystkie_adresy[-1] != adres_str):
+                    wszystkie_adresy.append(adres_str)
+
+            # Rozdzielenie na adres aktualny (zawsze ostatni na liście w KRS) i historię
+            krs_adres_aktualny = wszystkie_adresy[-1] if wszystkie_adresy else ""
+            
+            # Jeśli jest więcej niż 1 adres, formatujemy historię jako: "Adres 1 -> Adres 2 -> ..."
+            krs_adresy_historyczne = " -> ".join(wszystkie_adresy[:-1]) if len(wszystkie_adresy) > 1 else "Brak zmian adresu"
+
+            # 4. Osoby decyzyjne (wyciągamy tylko z najświeższych wpisów, by uprościć - dla Odpisu Pełnego to zazwyczaj ostatni element listy reprezentacji)
+            osoby_decyzyjne = []
+            reprezentacja_lista = dane.get("dzial2", {}).get("reprezentacja", [])
+            if isinstance(reprezentacja_lista, dict):
+                reprezentacja_lista = [reprezentacja_lista]
+                
+            # Bierzemy ostatni (najbardziej aktualny) wpis o reprezentacji
+            sklad_zarzadu = reprezentacja_lista[-1].get("sklad", []) if reprezentacja_lista else []
+            for osoba in sklad_zarzadu:
+                # W Odpisie Pełnym osoby usunięte z zarządu mogą mieć znacznik wykreślenia
+                if "informacjaOWykresleniu" in osoba:
+                    continue # Pomijamy byłych członków zarządu
+                    
+                imie = osoba.get("imiona", {}).get("imie", "")
+                nazwisko = osoba.get("nazwisko", {}).get("nazwiskoICzlon", osoba.get("nazwisko", {}).get("nazwiskoCzlonPierwszy", ""))
+                funkcja = osoba.get("funkcjaWOrganie", "Członek organu")
                 osoby_decyzyjne.append(f"{imie} {nazwisko} ({funkcja})".strip())
 
-            # 5. Udziałowcy (Wspólnicy Sp. z o.o.)
-            # Uwaga: Dla spółek akcyjnych (S.A.) ten klucz to np. `jedynyAkcjonariusz` lub brak danych.
-            udzialowcy =[]
-            wspolnicy_data = dane.get("dzial1", {}).get("wspolnicySpzoo",[])
-            for w in wspolnicy_data:
+            # 5. Udziałowcy (też bierzemy najbardziej aktualnych, ignorując wykreślonych)
+            udzialowcy = []
+            wspolnicy_lista = dane.get("dzial1", {}).get("wspolnicySpzoo", [])
+            if isinstance(wspolnicy_lista, dict):
+                wspolnicy_lista = [wspolnicy_lista]
+                
+            for w in wspolnicy_lista:
+                if "informacjaOWykresleniu" in w:
+                    continue # Pomijamy starych udziałowców (sprzedawców "spółki z półki")
+                    
                 posiadane_udzialy = w.get("posiadaneUdzialy", "")
                 nazwa_firmy = w.get("nazwa", "")
                 
                 if nazwa_firmy:
-                    # Udziałowcem jest inny podmiot (Spółka z o.o., LTD itp.)
                     udzialowcy.append(f"{nazwa_firmy} [{posiadane_udzialy}]")
                 else:
-                    # Udziałowcem jest osoba fizyczna
                     imie = w.get("imiona", {}).get("imie", "")
-                    nazwisko_dict = w.get("nazwisko", {})
-                    nazwisko = nazwisko_dict.get("nazwiskoICzlon", "")
-                    
+                    nazwisko = w.get("nazwisko", {}).get("nazwiskoICzlon", "")
                     udzialowcy.append(f"{imie} {nazwisko} [{posiadane_udzialy}]".strip())
 
             return {
                 "krs_status": status,
                 "likwidacja": is_liquidated,
-                "krs_adres": adres,
+                "krs_adres_aktualny": krs_adres_aktualny,
+                "krs_adresy_historyczne": krs_adresy_historyczne,
                 "osoby_decyzyjne": " | ".join(osoby_decyzyjne),
                 "udzialowcy": " | ".join(udzialowcy)
             }
@@ -104,5 +125,6 @@ class KrsApiEnricher:
         except Exception as e:
             return {
                 "krs_status": f"Błąd parsowania: {str(e)}",
-                "likwidacja": "", "krs_adres": "", "osoby_decyzyjne": "", "udzialowcy": ""
+                "likwidacja": "", "krs_adres_aktualny": "", "krs_adresy_historyczne": "",
+                "osoby_decyzyjne": "", "udzialowcy": ""
             }

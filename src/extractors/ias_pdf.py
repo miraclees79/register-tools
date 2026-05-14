@@ -27,53 +27,51 @@ class IASPdfExtractor:
                     continue
                     
                 for row in table:
-                    # 1. Wstępne czyszczenie komórek, by pozbyć się "None"
                     cleaned_row = []
                     for i, cell in enumerate(row):
                         if cell is None:
                             cleaned_row.append("")
                         elif i == 5:
-                            # Kolumna usług: usuwamy entery, zostawiamy pojedyncze spacje
                             cell_text = str(cell).replace('\n', ' ')
                             cell_text = re.sub(r'\s+', ' ', cell_text).strip()
                             cleaned_row.append(cell_text)
                         else:
                             cleaned_row.append(str(cell).replace('\n', ' ').strip())
                             
-                    # Pomijamy wiersze, które po czyszczeniu są całkowicie puste
                     if not any(cleaned_row):
                         continue
                         
-                    # 2. Agresywne usuwanie nagłówków (odporne na dodatkowe spacje i białe znaki w PDF)
-                    # Usuwamy wszystkie spacje i porównujemy wielkimi literami
+                    # Agresywne usuwanie nagłówków
                     first_cell_norm = re.sub(r'\s+', '', cleaned_row[0].upper())
                     second_cell_norm = re.sub(r'\s+', '', cleaned_row[1].upper())
                     
                     if "NUMERWREJESTRZE" in first_cell_norm or "DATAWPISU" in second_cell_norm:
                         continue
                         
-                    # 3. Detekcja wierszy rozbitych na dwie strony (Continuation Row)
-                    # Jeśli pierwsze 5 kolumn jest pustych (np. nie ma NIP, KRS, Nazwy), 
-                    # a w innych kolumnach jest tekst, to na pewno dokończenie wiersza wyżej.
-                    is_continuation = all(cell == "" for cell in cleaned_row[:5])
+                    # POPRAWKA DETEKCJI WIERSZY:
+                    # Jeśli nie ma "Numeru w rejestrze" (kol. 0) oraz "KRS" (kol. 3) i "NIP" (kol. 4), 
+                    # uznajemy wiersz za obcięty fragment poprzedniego wiersza.
+                    is_continuation = (cleaned_row[0] == "" and cleaned_row[3] == "" and cleaned_row[4] == "")
                     
                     if is_continuation and all_rows:
-                        # Doklejamy tekst do poprzedniego wiersza (do odpowiednich kolumn)
-                        for idx in range(5, len(cleaned_row)):
-                            if cleaned_row[idx]:
-                                # Łączymy dotychczasowy tekst z nowym, przedzielając spacją
-                                all_rows[-1][idx] = (all_rows[-1][idx] + " " + cleaned_row[idx]).strip()
+                        # Doklejamy tekst do poprzedniego wiersza, skanując wszystkie kolumny
+                        for idx in range(len(cleaned_row)):
+                            if cleaned_row[idx]:  # Jeśli fragment zawiera jakikolwiek tekst
+                                if all_rows[-1][idx]:
+                                    # Dodajemy spację między złączonymi tekstami
+                                    all_rows[-1][idx] = (all_rows[-1][idx] + " " + cleaned_row[idx]).strip()
+                                else:
+                                    # Na wypadek, gdyby poprzednia komórka była wcześniej pusta
+                                    all_rows[-1][idx] = cleaned_row[idx].strip()
                     else:
-                        # To jest standardowy, nowy wiersz
+                        # Standardowy wiersz z danymi
                         all_rows.append(cleaned_row)
                         
         if not all_rows:
             raise ValueError("Nie znaleziono tabeli w pliku PDF.")
 
-        # 4. Budowa gotowej ramki danych
         df = pd.DataFrame(all_rows)
         
-        # Ochrona w przypadku zmiany struktury tabeli
         if len(df.columns) == len(self.expected_headers):
             df.columns = self.expected_headers
         else:
@@ -85,10 +83,6 @@ class IASPdfExtractor:
         return df
 
     def clean_krs_column(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Wyszukuje i czyści numery KRS z kolumny "Numer KRS".
-        Pozwala to odfiltrować np. osoby fizyczne z pustym KRS-em.
-        """
         krs_col_name = 'Numer KRS'
         
         if krs_col_name not in df.columns:
