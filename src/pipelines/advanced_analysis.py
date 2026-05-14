@@ -4,7 +4,7 @@ import pandas as pd
 import requests
 import re
 from bs4 import BeautifulSoup
-from duckduckgo_search import DDGS 
+from ddgs import DDGS
 from tqdm import tqdm
 from google import genai  # Nowe, wspierane SDK Google
 
@@ -115,112 +115,63 @@ class WebAnalyzer:
             return f"Błąd LLM: {str(e)}"
 
 
+
+
 def analyze_address_clusters(
     df: pd.DataFrame
 ) -> pd.DataFrame:
     """
     Wykrywa wirtualne biura / klastry rejestracyjne na podstawie 
-    wszystkich adresów (aktualnych i historycznych).
+    wszystkich adresów (aktualnych i historycznych), dodając ID klastra.
     """
-    # 1. Zabezpieczenie przed brakiem danych (NaN) i ujednolicenie
-    aktualny_adres = df['krs_adres_aktualny'].fillna(
-        value=''
-    )
-    historyczne_adresy = df['krs_adresy_historyczne'].fillna(
-        value=''
-    ).replace(
-        to_replace="Brak zmian adresu", 
-        value=""
-    )
-    
-    # 2. Połączenie wszystkich adresów w jeden ciąg oddzielony separatorem
+    # 1. Przygotowanie danych adresowych
+    aktualny_adres = df['krs_adres_aktualny'].fillna('')
+    historyczne_adresy = df['krs_adresy_historyczne'].fillna('').replace("Brak zmian adresu", "")
     all_addresses_raw = aktualny_adres + " -> " + historyczne_adresy
     
-    # 3. Podział na listę adresów dla każdego podmiotu
-    df['adresy_lista'] = all_addresses_raw.str.split(
-        pat=" -> "
-    )
+    df['adresy_lista'] = all_addresses_raw.str.split(" -> ")
     
-    # 4. Funkcja wewnętrzna do oczyszczania i normalizacji listy adresów
-    def clean_addresses(
-        addr_list: list
-    ) -> list:
+    # 2. Normalizacja adresów
+    def clean_addresses(addr_list: list) -> list:
         cleaned_set = set()
         for addr in addr_list:
             addr_str = str(addr).lower()
-            addr_str = re.sub(
-                pattern=r'ul\.', 
-                repl='', 
-                string=addr_str
-            )
-            addr_str = re.sub(
-                pattern=r'[^a-z0-9ąćęłńóśźż/ ]', 
-                repl='', 
-                string=addr_str
-            )
-            addr_str = re.sub(
-                pattern=r'\s+', 
-                repl=' ', 
-                string=addr_str
-            ).strip()
-            
+            addr_str = re.sub(r'ul\.', '', addr_str)
+            addr_str = re.sub(r'[^a-z0-9ąćęłńóśźż/ ]', '', addr_str)
+            addr_str = re.sub(r'\s+', ' ', addr_str).strip()
             if addr_str:
                 cleaned_set.add(addr_str)
         return list(cleaned_set)
         
-    df['znormalizowane_adresy'] = df['adresy_lista'].apply(
-        func=clean_addresses
-    )
+    df['znormalizowane_adresy'] = df['adresy_lista'].apply(clean_addresses)
     
-    # 5. Zliczenie wystąpień dla wszystkich znormalizowanych adresów w rejestrze
-    exploded_addresses = df['znormalizowane_adresy'].explode()
+    # 3. Globalne zliczenie wystąpień dla każdego adresu
+    exploded_addresses = df['znormalizowane_adresy'].explode().dropna()
     address_counts = exploded_addresses.value_counts()
     
-    # 6. Funkcje wyciągające wyniki (szukamy największego klastra z historii firmy)
-    def get_max_cluster(
-        addr_list: list
-    ) -> int:
-        if not addr_list:
-            return 0
-        counts = [address_counts.get(key=a, default=0) for a in addr_list]
-        return max(counts)
+    # 4. Wyciągnięcie kluczowych metryk (rozmiar i ID klastra)
+    def get_max_cluster_size(addr_list: list) -> int:
+        if not addr_list: return 0
+        return max([address_counts.get(a, 0) for a in addr_list])
         
-    def get_cluster_details(
-        addr_list: list
-    ) -> str:
-        if not addr_list:
-            return ""
-        # Zapiszmy jakie klastry firma "odwiedziła" w formacie np. "zwykla ulica 1 [1] | mroczny adres 99 [45]"
-        details = [f"{a} [{address_counts.get(key=a, default=0)}]" for a in addr_list]
-        return " | ".join(details)
-        
-    df['najwiekszy_klaster_adresowy'] = df['znormalizowane_adresy'].apply(
-        func=get_max_cluster
-    )
-    df['szczegoly_adresow_historycznych'] = df['znormalizowane_adresy'].apply(
-        func=get_cluster_details
-    )
-    
-    # 7. Flaga ryzyka przypisywana na podstawie najbardziej zatłoczonego adresu w historii podmiotu
-    def assign_risk(
-        cluster_size: int
-    ) -> str:
-        if cluster_size >= 3:
-            return 'Wysokie'
-        elif cluster_size <= 1:
-            return 'Niskie'
-        else:
-            return 'Średnie'
+    def get_main_address_cluster_id(addr_list: list) -> str:
+        if not addr_list: return ""
+        # Jako ID klastra zwracamy ten adres z historii firmy, który jest najbardziej "zatłoczony"
+        return max(addr_list, key=lambda addr: address_counts.get(addr, 0))
 
-    df['wirtualne_biuro_ryzyko'] = df['najwiekszy_klaster_adresowy'].apply(
-        func=assign_risk
-    )
+    df['najwiekszy_klaster_adresowy'] = df['znormalizowane_adresy'].apply(get_max_cluster_size)
+    df['klaster_adresowy_id'] = df['znormalizowane_adresy'].apply(get_main_address_cluster_id)
+
+    # 5. Przypisanie flagi ryzyka
+    def assign_risk(cluster_size: int) -> str:
+        if cluster_size >= 3: return 'Wysokie'
+        if cluster_size == 2: return 'Średnie'
+        return 'Niskie'
+
+    df['wirtualne_biuro_ryzyko'] = df['najwiekszy_klaster_adresowy'].apply(assign_risk)
     
-    # 8. Usuwanie kolumn tymczasowych ułatwiających obliczenia
-    df.drop(
-        columns=['adresy_lista', 'znormalizowane_adresy'], 
-        inplace=True
-    )
+    # 6. Sprzątanie - kolumny ID zostają w pliku wynikowym!
+    df.drop(columns=['adresy_lista', 'znormalizowane_adresy'], inplace=True)
     
     return df
 
@@ -230,109 +181,55 @@ def analyze_shareholder_clusters(
 ) -> pd.DataFrame:
     """
     Wykrywa klastry powiązań kapitałowych na podstawie obecnych 
-    i historycznych udziałowców (firmy oraz osoby fizyczne maskowane PESELem).
+    i historycznych udziałowców, dodając ID klastra.
     """
-    # 1. Zabezpieczenie przed brakami danych (NaN)
-    aktualni_udzialowcy = df['udzialowcy'].fillna(
-        value=''
-    )
-    historyczni_udzialowcy = df['historyczni_udzialowcy'].fillna(
-        value=''
-    )
-    
-    # 2. Połączenie wszystkich powiązań w jeden wspólny ciąg
+    # 1. Przygotowanie danych o udziałowcach
+    aktualni_udzialowcy = df['udzialowcy'].fillna('')
+    historyczni_udzialowcy = df['historyczni_udzialowcy'].fillna('')
     wszyscy_udzialowcy_raw = aktualni_udzialowcy + " | " + historyczni_udzialowcy
     
-    # 3. Rozbicie ciągu znaków na listę w oparciu o separator
-    df['udzialowcy_lista'] = wszyscy_udzialowcy_raw.str.split(
-        pat=" | "
-    )
+    df['udzialowcy_lista'] = wszyscy_udzialowcy_raw.str.split(" | ")
     
-    # 4. Funkcja do czyszczenia danych (usunięcie informacji o kwotach i datach)
-    def clean_shareholders(
-        sh_list: list
-    ) -> list:
+    # 2. Normalizacja (usunięcie kwot i dat)
+    def clean_shareholders(sh_list: list) -> list:
         cleaned_set = set()
         for sh in sh_list:
             sh_str = str(sh).strip()
-            if not sh_str or sh_str == "|":
-                continue
-                
-            # Usuwamy wszystko co jest w nawiasach kwadratowych: "[600 UDZIAŁÓW...]" oraz "[od 18.11...]"
-            # Dzięki temu zostaje samo: "SCALE COMPUTING SOLUTIONS LTD" lub "W******* G******** (PESEL: 5**********)"
-            sh_clean = re.sub(
-                pattern=r'\[.*?\]', 
-                repl='', 
-                string=sh_str
-            ).strip()
-            
-            if sh_clean:
-                cleaned_set.add(sh_clean)
-                
+            if sh_str and sh_str != "|":
+                sh_clean = re.sub(r'\[.*?\]', '', sh_str).strip()
+                if sh_clean:
+                    cleaned_set.add(sh_clean)
         return list(cleaned_set)
         
-    df['znormalizowani_udzialowcy'] = df['udzialowcy_lista'].apply(
-        func=clean_shareholders
-    )
+    df['znormalizowani_udzialowcy'] = df['udzialowcy_lista'].apply(clean_shareholders)
     
-    # 5. Globalne zliczenie wystąpień dla każdego "czystego" udziałowca w rejestrze
-    exploded_sh = df['znormalizowani_udzialowcy'].explode()
+    # 3. Globalne zliczenie wystąpień dla każdego "czystego" udziałowca
+    exploded_sh = df['znormalizowani_udzialowcy'].explode().dropna()
     sh_counts = exploded_sh.value_counts()
     
-    # 6. Wyciągnięcie najwyższej liczby powiązań dla danej spółki
-    def get_max_sh_cluster(
-        sh_list: list
-    ) -> int:
-        if not sh_list:
-            return 0
-        counts = [sh_counts.get(key=s, default=0) for s in sh_list]
-        return max(counts)
+    # 4. Wyciągnięcie kluczowych metryk (rozmiar i ID klastra)
+    def get_max_sh_cluster_size(sh_list: list) -> int:
+        if not sh_list: return 0
+        return max([sh_counts.get(s, 0) for s in sh_list])
         
-    # 7. Zbudowanie czytelnego podsumowania (kto konkretnie jest seryjnym udziałowcem)
-    def get_sh_cluster_details(
-        sh_list: list
-    ) -> str:
-        if not sh_list:
-            return ""
-        details = []
-        for s in sh_list:
-            poziom_wystapien = sh_counts.get(key=s, default=0)
-            # Zapisujemy tylko tych, którzy przewijają się przez więcej niż 1 firmę
-            if poziom_wystapien > 1:
-                details.append(f"{s} [występuje w {poziom_wystapien} podmiotach]")
-                
-        if not details:
-            return "Brak powiązań z innymi podmiotami"
-            
-        return " | ".join(details)
-        
-    df['max_powiazania_udzialowca'] = df['znormalizowani_udzialowcy'].apply(
-        func=get_max_sh_cluster
-    )
-    df['powiazani_udzialowcy_szczegoly'] = df['znormalizowani_udzialowcy'].apply(
-        func=get_sh_cluster_details
-    )
+    def get_main_sh_cluster_id(sh_list: list) -> str:
+        if not sh_list: return ""
+        # Jako ID klastra zwracamy tego udziałowca z historii firmy, który jest najbardziej "seryjny"
+        return max(sh_list, key=lambda sh: sh_counts.get(sh, 0))
     
-    # 8. Nadanie flagi ryzyka (skalarnej)
-    def assign_sh_risk(
-        cluster_size: int
-    ) -> str:
-        if cluster_size >= 3:
-            return 'Wysokie' # Ten sam udziałowiec w 3+ firmach krypto to silny sygnał
-        elif cluster_size == 2:
-            return 'Średnie'
-        else:
-            return 'Niskie'
+    df['max_powiazania_udzialowca'] = df['znormalizowani_udzialowcy'].apply(get_max_sh_cluster_size)
+    df['klaster_udzialowca_id'] = df['znormalizowani_udzialowcy'].apply(get_main_sh_cluster_id)
 
-    df['ryzyko_powiazan_kapitalowych'] = df['max_powiazania_udzialowca'].apply(
-        func=assign_sh_risk
-    )
+    # 5. Przypisanie flagi ryzyka
+    def assign_sh_risk(cluster_size: int) -> str:
+        if cluster_size >= 3: return 'Wysokie'
+        if cluster_size == 2: return 'Średnie'
+        return 'Niskie'
+
+    df['ryzyko_powiazan_kapitalowych'] = df['max_powiazania_udzialowca'].apply(assign_sh_risk)
     
-    # 9. Sprzątanie
-    df.drop(
-        columns=['udzialowcy_lista', 'znormalizowani_udzialowcy'], 
-        inplace=True
-    )
+    # 6. Sprzątanie - kolumny ID zostają w pliku wynikowym!
+    df.drop(columns=['udzialowcy_lista', 'znormalizowani_udzialowcy'], inplace=True)
     
     return df
 
