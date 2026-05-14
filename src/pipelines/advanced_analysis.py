@@ -37,7 +37,8 @@ class WebAnalyzer:
                 )
             )
             if results:
-                return results[0].get(key='href', default='')
+                # dict.get musi być wywołane pozycyjnie
+                return results[0].get('href', '')
         except Exception as e:
             print(f"Błąd wyszukiwania dla {company_name}: {e}")
         return ""

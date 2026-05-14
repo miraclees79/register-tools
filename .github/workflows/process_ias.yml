@@ -1,24 +1,24 @@
 name: Crypto Registry ETL & OSINT Pipeline
 
-# Określamy, kiedy pipeline ma się uruchomić
 on:
-  # 1. Możliwość ręcznego odpalenia z zakładki "Actions" na GitHubie
   workflow_dispatch:
+    inputs:
+      run_etl:
+        description: 'Uruchom ETL (PDF -> KRS)'
+        required: true
+        default: true
+        type: boolean
+      run_osint:
+        description: 'Uruchom OSINT (LLM / Gemini)'
+        required: true
+        default: false
+        type: boolean
   
-  # 2. Automatyczne uruchomienie wg harmonogramu (np. w każdy poniedziałek o 03:00 UTC)
-  # Przydatne, aby regularnie odświeżać statusy podmiotów w KRS
-  # schedule:
-  #  - cron: '0 3 * * 1'
-    
-  # 3. Uruchomienie przy każdym zmergowaniu/pushu do głównej gałęzi, 
-  # ale tylko jeśli zmienił się kod lub lista zależności
   push:
     branches:
       - main
     paths:
-      # - 'src/**'
-      # - 'requirements.txt'
-      - 'data/raw/**' # Uruchomi się też, gdy zaktualizujesz bazowy PDF
+      - 'data/raw/**'
 
 jobs:
   build-and-run:
@@ -46,21 +46,24 @@ jobs:
           mkdir -p data/raw
           mkdir -p data/processed
 
-      # Krok 1: Ekstrakcja z PDF i wzbogacenie danymi z KRS (teraz z historią)
+      # Krok 1: Ekstrakcja z PDF i wzbogacenie danymi z KRS
+      # Wykonuje się tylko, gdy run_etl jest true lub przy automatycznym pushu
       - name: Run Extraction & KRS Enrichment
+        if: ${{ github.event_name == 'push' || github.event.inputs.run_etl == 'true' }}
         env:
           PYTHONPATH: .
         run: python src/pipelines/process_ias.py
 
-      # Krok 2: Uruchomienie analizy OSINT/LLM z użyciem Google Gemini
-      # Przekazujemy sekret z GitHuba jako zmienną środowiskową
+      # Krok 2: Uruchomienie analizy OSINT/LLM
+      # Wykonuje się tylko, gdy run_osint jest true
       - name: Run Advanced OSINT Analysis
+        if: ${{ github.event.inputs.run_osint == 'true' }}
         env:
           PYTHONPATH: .
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python src/pipelines/advanced_analysis.py
 
-      # Krok 3: Zapisanie obu wyników jako Artefakty
+      # Krok 3: Zapisanie artefaktów
       - name: Upload processed data as Artifact
         uses: actions/upload-artifact@v4
         with:
@@ -68,11 +71,11 @@ jobs:
           path: data/processed/*.csv
           retention-days: 30
 
-      # Krok 4: Automatyczny commit do repozytorium
+      # Krok 4: Automatyczny commit
       - name: Commit and push changes
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "🤖 Auto-update: Wzbogacone dane KRS oraz analiza OSINT (Gemini)"
+          commit_message: "🤖 Auto-update: Wykonano wybrane kroki pipeline"
           file_pattern: 'data/processed/*.csv'
           commit_user_name: "github-actions[bot]"
           commit_user_email: "github-actions[bot]@users.noreply.github.com"
