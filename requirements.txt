@@ -4,3 +4,4 @@ requests
 google-generativeai
 duckduckgo-search
 beautifulsoup4
+tqdm
