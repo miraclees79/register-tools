@@ -25,19 +25,29 @@ class WebAnalyzer:
 
     def find_website(
         self, 
-        company_name: str
+        company_name: str,
+        shareholder_name: str | None = None
     ) -> str:
-        query = f'"{company_name}" krypto OR kryptowaluty OR crypto exchange'
+        # Tworzymy bazowe zapytanie dla polskiego podmiotu
+        search_query = f'"{company_name}" krypto'
+        
+        # Jeśli mamy nazwę udziałowca, dodajemy ją do zapytania dla wzmocnienia kontekstu
+        if shareholder_name and "PESEL" not in shareholder_name: # Ignorujemy zamaskowane osoby fizyczne
+            # Usuwamy z nazwy udziałowca dodatki typu "SP Z O O" aby wyszukiwanie było bardziej elastyczne
+            clean_shareholder = shareholder_name.replace("SPÓŁKA Z OGRANICZONĄ ODPOWIEDZIALNOŚCIĄ", "") \
+                                                .replace("LTD", "") \
+                                                .replace("LIMITED", "").strip()
+            search_query += f' OR "{clean_shareholder}"'
+
         try:
             results = list(
                 self.ddgs.text(
-                    keywords=query, 
+                    query=search_query,
                     region='pl-pl', 
                     max_results=1
                 )
             )
             if results:
-                # dict.get musi być wywołane pozycyjnie
                 return results[0].get('href', '')
         except Exception as e:
             print(f"Błąd wyszukiwania dla {company_name}: {e}")
@@ -235,13 +245,7 @@ def analyze_shareholder_clusters(
 
 
 def run_advanced_pipeline() -> None:
-    base_dir = os.path.dirname(
-        p=os.path.dirname(
-            p=os.path.dirname(
-                p=__file__
-            )
-        )
-    )
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
     input_path = os.path.join(
         base_dir, 
         "data", 
@@ -265,48 +269,53 @@ def run_advanced_pipeline() -> None:
         df=df
     )
     
-    # NAPRAWIONY BŁĄD KeyError (używamy teraz nowych nazw kolumn dla adresów historycznych)
     df_filtered_addresses = df[df['najwiekszy_klaster_adresowy'] > 1]
     top_addresses = df_filtered_addresses['krs_adres_aktualny'].unique()
-    print(f"Znaleziono {len(top_addresses)} klastrów adresowych (biura obsługujące wiele VASPów).")
-    
-    # KROK 1.5: Analiza powiązań udziałowców
+    print(f"Znaleziono {len(top_addresses)} klastrów adresowych.")
+
     print("Analiza powiązań udziałowców (kapitałowych)...")
-    df = analyze_shareholder_clusters(df=df)
-    
-    # KROK 2: Analiza WWW z użyciem AI
+    df = analyze_shareholder_clusters(
+        df=df
+    )
+
     print("Uruchamianie wyszukiwania i analizy LLM (to może potrwać)...")
     analyzer = WebAnalyzer()
     
     df['website_url'] = ""
     df['ai_summary'] = ""
 
-    # Używamy tqdm dla wyświetlania paska postępu
+    # PĘTLA PRZECHODZI TERAZ PRZEZ WSZYSTKIE WIERSZE, NIEZALEŻNIE OD KRS
     for index, row in tqdm(iterable=df.iterrows(), total=len(df), desc="Analiza AI"):
         company_name = str(row['Imię i Nazwisko / Nazwa firmy'])
+        # Dla podmiotów bez KRS, to pole będzie puste, co jest prawidłowe
+        main_shareholder = str(row.get('klaster_udzialowca_id', '')) 
         
-        if pd.notna(row['Numer KRS']):
-            url = analyzer.find_website(
-                company_name=company_name
+        # Krok 1: Zawsze próbuj znaleźć stronę internetową
+        url = analyzer.find_website(
+            company_name=company_name,
+            shareholder_name=main_shareholder
+        )
+        df.at[index, 'website_url'] = url
+        
+        # Krok 2: Jeśli strona została znaleziona, pobierz treść i analizuj
+        if url:
+            text = analyzer.scrape_website_text(
+                url=url
             )
-            df.at[index, 'website_url'] = url
-            
-            if url:
-                text = analyzer.scrape_website_text(
-                    url=url
+            # Analizujemy tylko jeśli udało się pobrać sensowną ilość tekstu
+            if len(text) > 50:
+                summary = analyzer.synthesize_with_llm(
+                    company_name=company_name, 
+                    website_text=text
                 )
-                if len(text) > 50:
-                    summary = analyzer.synthesize_with_llm(
-                        company_name=company_name, 
-                        website_text=text
-                    )
-                    df.at[index, 'ai_summary'] = summary
-                else:
-                    df.at[index, 'ai_summary'] = "Nie udało się pobrać treści strony."
-            
-            time.sleep(4)
+                df.at[index, 'ai_summary'] = summary
+            else:
+                df.at[index, 'ai_summary'] = "Nie udało się pobrać treści strony (prawdopodobnie blokada lub błąd)."
         else:
-            df.at[index, 'ai_summary'] = "Pominięto (brak KRS)."
+            df.at[index, 'ai_summary'] = "Nie znaleziono strony internetowej."
+        
+        # Krok 3: Zachowujemy opóźnienie, aby nie przeciążać API
+        time.sleep(4)
 
     print("\nZapisywanie osint_crypto_register.csv...")
     df.to_csv(
