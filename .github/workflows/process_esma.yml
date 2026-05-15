@@ -37,6 +37,8 @@ jobs:
         env:
           # Ustawienie PYTHONPATH jest kluczowe, aby importy z folderu src/ działały
           PYTHONPATH: .
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
         run: python src/pipelines/process_esma.py
 
       # Krok opcjonalny: Zapisanie przetworzonego pliku jako artefaktu
