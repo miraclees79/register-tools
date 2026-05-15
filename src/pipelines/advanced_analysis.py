@@ -152,7 +152,7 @@ class WebAnalyzer:
         """
         
         # Lista modeli: najpierw próbujemy potężną Gemmę, potem stabilny Flash
-        models_to_try =['gemma-4-31b-it', 'gemini-3.1-flash-lite']
+        models_to_try =['gemma-4-26b-a4b-it', 'gemma-4-31b-it', 'gemini-3.1-flash-lite']
         
         last_error = ""
         
@@ -169,6 +169,8 @@ class WebAnalyzer:
                 last_error = str(e)
                 print(f"Model {model_name} nie powiódł się, próbuję kolejny...")
                 time.sleep(1) # Krótka pauza przed fallbackiem
+                if "500" in str(e) or "503" in str(e):
+                    time.sleep(5)
                 continue
         
         return f"Błąd LLM po próbach wszystkich modeli: {last_error}"

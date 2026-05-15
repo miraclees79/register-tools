@@ -47,7 +47,7 @@ class BankingLicenseVerifier:
         """
     
         # 2. Próba z użyciem "Retry" i Fallbacku
-        models_to_try = ['gemma-4-31b-it', 'gemma-4-26b-a4b-it', 'gemini-3.1-flash-lite']
+        models_to_try = ['gemma-4-26b-a4b-it', 'gemma-4-31b-it', 'gemini-3.1-flash-lite']
     
         for model_name in models_to_try:
             try:
@@ -60,6 +60,8 @@ class BankingLicenseVerifier:
             except Exception:
                 print(f"Model {model_name} failed. Trying next...")
                 time.sleep(2) # Krótka pauza przed fallbackiem
+                if "500" in str(e) or "503" in str(e):
+                    time.sleep(5)
                 continue
             
         return "Error: All models failed"
