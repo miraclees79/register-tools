@@ -27,27 +27,23 @@ class EsmaApiEnricher:
     
     async def fetch_entity_classification(self, session: aiohttp.ClientSession, lei: str) -> str:
         """
-        Pobiera klasyfikację korzystając z rdzenia upreg, 
-        używając pola ae_lei zgodnie z dokumentacją.
+        Pobiera wszystkie unikalne etykiety klasyfikacji dla danego LEI,
+        przeszukując wszystkie zwrócone dokumenty (rekordy) w API.
         """
         if not lei: return ""
         
         url = "https://registers.esma.europa.eu/solr/esma_registers_upreg/select"
         
-        # Zgodnie z Twoim linkiem do dokumentacji:
-        # q=ae_lei:"{lei}" - wyszukiwanie w polu ae_lei
-        # fq=type_s:parent - filtrujemy tylko rekordy główne
-        # rows=1 - bierzemy pierwszy dopasowany
+        # q=ae_lei:"{lei}" - szukamy w tym polu
+        # fq=type_s:parent - tylko główne wpisy
         params = {
             'q': f'ae_lei:"{lei}"',
             'fq': 'type_s:parent',
-            'rows': '1',
+            'rows': '10', # Zwiększamy do 10, bo podmiot może mieć więcej niż 1 licencję
             'wt': 'json'
         }
         
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
+        headers = {'User-Agent': 'Mozilla/5.0'}
         
         try:
             async with session.get(url=url, params=params, headers=headers) as response:
@@ -56,15 +52,18 @@ class EsmaApiEnricher:
                     docs = data.get('response', {}).get('docs',[])
                     
                     if docs:
-                        # Teraz bierzemy 'ae_entityTypeLabel' zgodnie z tym co zwróciło API
-                        entity_type = docs[0].get('ae_entityTypeLabel', '')
+                        # Zbieramy wszystkie etykiety ze wszystkich znalezionych dokumentów
+                        labels = set()
+                        for doc in docs:
+                            val = doc.get('ae_entityTypeLabel')
+                            if val:
+                                if isinstance(val, list):
+                                    labels.update(val)
+                                else:
+                                    labels.add(str(val))
                         
-                        # Jeśli jest listą, łączymy, jeśli stringiem, zwracamy
-                        if isinstance(entity_type, list):
-                            return " | ".join([str(x) for x in entity_type])
-                        return str(entity_type)
-                
-                # Jeśli status nie 200 lub brak docs, zwracamy pusty string
+                        # Łączymy w jeden długi string, który potem przefiltrujemy
+                        return " | ".join(sorted(labels))
                 return ""
         except Exception as e:
             print(f"Błąd API ESMA dla LEI {lei}: {e}")
