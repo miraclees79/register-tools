@@ -40,19 +40,17 @@ class SsmPdfVerifier:
 
         print(f"Analiza pliku PDF: {self.pdf_path}...")
         try:
-            with pdfplumber.open(path=self.pdf_path) as pdf:
+            # Poprawny sposób otwarcia pliku w pdfplumber (ścieżka jako pozycyjny argument)
+            with pdfplumber.open(self.pdf_path) as pdf:
                 for page in pdf.pages:
-                    # Pobieramy czysty tekst ze strony, ignorując całkowicie układ tabeli
                     text = page.extract_text()
                     
                     if text:
-                        # Wyciągamy słowa o długości dokładnie 20 wielkich liter/cyfr
-                        # \b gwarantuje, że nie wytniemy 20 znaków ze środka dłuższego ciągu
+                        # Wyszukujemy wszystkie 20-znakowe ciągi alfanumeryczne
                         found_leis = re.findall(
                             pattern=r'\b[A-Z0-9]{20}\b', 
                             string=text
                         )
-                        # Aktualizujemy unikalny zbiór o znalezione na stronie kody
                         self.lei_set.update(found_leis)
                         
             print(f"Wczytano {len(self.lei_set)} unikalnych kodów LEI z pliku PDF.")
