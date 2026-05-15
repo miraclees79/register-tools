@@ -23,35 +23,51 @@ class WebAnalyzer:
     def __init__(self):
         self.ddgs = DDGS()
 
-    def find_website(
+    def find_websites(
         self, 
         company_name: str,
         shareholder_name: str | None = None
-    ) -> str:
-        # Tworzymy bazowe zapytanie dla polskiego podmiotu
+    ) -> list:
         search_query = f'"{company_name}" krypto'
-        
-        # Jeśli mamy nazwę udziałowca, dodajemy ją do zapytania dla wzmocnienia kontekstu
-        if shareholder_name and "PESEL" not in shareholder_name: # Ignorujemy zamaskowane osoby fizyczne
-            # Usuwamy z nazwy udziałowca dodatki typu "SP Z O O" aby wyszukiwanie było bardziej elastyczne
-            clean_shareholder = shareholder_name.replace("SPÓŁKA Z OGRANICZONĄ ODPOWIEDZIALNOŚCIĄ", "") \
-                                                .replace("LTD", "") \
-                                                .replace("LIMITED", "").strip()
+        if shareholder_name and "PESEL" not in shareholder_name:
+            clean_shareholder = shareholder_name.replace("SPÓŁKA Z OGRANICZONĄ ODPOWIEDZIALNOŚCIĄ", "").replace("LTD", "").replace("LIMITED", "").strip()
             search_query += f' OR "{clean_shareholder}"'
 
+        valid_links = []
+        # Lista słów kluczowych w URL, które chcemy ominąć
+        excluded_domains = [
+            "krs", "aleo.com", "rejestr.io", "owg.pl", 
+            "infoveriti", "biznes.gov.pl", "ceidg", 
+            "krs-online", "gowork", "panoramafirm"
+        ]
+        
         try:
+            # Pobieramy 10 wyników, aby mieć z czego odrzucać
             results = list(
                 self.ddgs.text(
                     query=search_query,
                     region='pl-pl', 
-                    max_results=1
+                    max_results=10
                 )
             )
-            if results:
-                return results[0].get('href', '')
+            for res in results:
+                href = res.get('href', '').lower()
+                
+                # Jeśli w linku znajduje się zakazana domena - pomijamy
+                if any(ex in href for ex in excluded_domains):
+                    continue
+                    
+                if href:
+                    valid_links.append(res.get('href', ''))
+                
+                # Zatrzymujemy po zebraniu 3 dobrych linków
+                if len(valid_links) == 3:
+                    break
+                    
         except Exception as e:
             print(f"Błąd wyszukiwania dla {company_name}: {e}")
-        return ""
+            
+        return valid_links
 
     def scrape_website_text(
         self, 
@@ -97,22 +113,21 @@ class WebAnalyzer:
 
         prompt = f"""
         Jesteś analitykiem finansowym (OSINT) badającym rynek kryptowalut.
-        Poniżej znajduje się tekst ze strony internetowej podmiotu zarejestrowanego jako VASP.
+        Poniżej znajduje się tekst z maksymalnie 3 najlepszych stron WWW powiązanych z podmiotem (VASP).
         Nazwa podmiotu: {company_name}
         
-        Tekst ze strony:
+        Tekst ze stron:
         {website_text}
         
         Twoje zadanie to odpowiedzieć zwięźle (max 3-4 zdania):
         1. Jaki jest główny profil działalności tej firmy?
         2. Czy kierują swoje usługi do klientów detalicznych (B2C) czy instytucjonalnych (B2B)?
-        Jeśli tekst nie zawiera jednoznacznych informacji, napisz: "Strona nie zawiera wyraźnych informacji."
+        Jeśli tekst to tylko szczątkowe informacje rejestrowe, napisz: "Brak wyraźnych informacji o profilu usług."
         """
         
         try:
-            # Nowy sposób wywoływania modelu w zaktualizowanej bibliotece
             response = gemini_client.models.generate_content(
-                model='gemini-1.5-flash',
+                model='gemini-2.5-flash', # Zaktualizowany, działający model
                 contents=prompt
             )
             if response.text:
@@ -284,37 +299,63 @@ def run_advanced_pipeline() -> None:
     df['website_url'] = ""
     df['ai_summary'] = ""
 
-    # PĘTLA PRZECHODZI TERAZ PRZEZ WSZYSTKIE WIERSZE, NIEZALEŻNIE OD KRS
-    for index, row in tqdm(iterable=df.iterrows(), total=len(df), desc="Analiza AI"):
+    # Używamy head(20) w celu puszczenia testu na 20 pierwszych podmiotach
+    for index, row in tqdm(iterable=df.head(20).iterrows(), total=20, desc="Analiza AI"):
         company_name = str(row['Imię i Nazwisko / Nazwa firmy'])
-        # Dla podmiotów bez KRS, to pole będzie puste, co jest prawidłowe
+        
+        # ==========================================
+        # FILTROWANIE PODMIOTÓW AKTYWNYCH
+        # ==========================================
+        zawieszenie_ias = str(row.get('Informacja o zawieszeniu działalności', '')).strip().lower()
+        zakonczenie_ias = str(row.get('Informacja o zakończeniu działalności', '')).strip().lower()
+        krs_status = str(row.get('krs_status', '')).strip()
+        likwidacja = str(row.get('likwidacja', '')).strip()
+
+        # Adnotacje "---" lub puste oznaczają brak zawieszenia/wykreślenia w rejestrze IAS
+        is_active_ias = (zawieszenie_ias in ['---', '', 'nan']) and (zakonczenie_ias in ['---', '', 'nan'])
+        # Podmiot aktywny w KRS lub w ogóle go tam nie ma (np. zagraniczny / CEIDG)
+        is_active_krs = (krs_status == 'Aktywny') or (krs_status == 'Brak KRS')
+        not_liquidated = (likwidacja != 'Tak')
+
+        if not (is_active_ias and is_active_krs and not_liquidated):
+            df.at[index, 'ai_summary'] = "Pominięto (podmiot nieaktywny, wykreślony lub zawieszony)."
+            continue
+        # ==========================================
+
         main_shareholder = str(row.get('klaster_udzialowca_id', '')) 
         
-        # Krok 1: Zawsze próbuj znaleźć stronę internetową
-        url = analyzer.find_website(
+        # Szukamy do 3 przefiltrowanych linków
+        urls = analyzer.find_websites(
             company_name=company_name,
             shareholder_name=main_shareholder
         )
-        df.at[index, 'website_url'] = url
         
-        # Krok 2: Jeśli strona została znaleziona, pobierz treść i analizuj
-        if url:
-            text = analyzer.scrape_website_text(
-                url=url
-            )
-            # Analizujemy tylko jeśli udało się pobrać sensowną ilość tekstu
-            if len(text) > 50:
+        # Zapisujemy znalezione linki oddzielone znakiem |
+        df.at[index, 'website_url'] = " | ".join(urls) if urls else ""
+        
+        if urls:
+            combined_text = ""
+            for url in urls:
+                text = analyzer.scrape_website_text(
+                    url=url
+                )
+                # Odrzucamy błędy HTTP i dodajemy tekst z tej konkretnej strony
+                if not text.startswith("Błąd") and not text.startswith("HTTP"):
+                    combined_text += f"\n--- {url} ---\n{text}"
+            
+            # Jeśli udało się zebrać jakikolwiek poprawny tekst
+            if len(combined_text) > 50:
                 summary = analyzer.synthesize_with_llm(
                     company_name=company_name, 
-                    website_text=text
+                    # Przekazujemy scalony tekst obcięty do 8000 znaków dla bezpieczeństwa
+                    website_text=combined_text[:8000] 
                 )
                 df.at[index, 'ai_summary'] = summary
             else:
-                df.at[index, 'ai_summary'] = "Nie udało się pobrać treści strony (prawdopodobnie blokada lub błąd)."
+                df.at[index, 'ai_summary'] = "Nie udało się pobrać treści z żadnej ze znalezionych stron."
         else:
-            df.at[index, 'ai_summary'] = "Nie znaleziono strony internetowej."
+            df.at[index, 'ai_summary'] = "Nie znaleziono odpowiednich stron (po odrzuceniu śmieciowych agregatorów KRS)."
         
-        # Krok 3: Zachowujemy opóźnienie, aby nie przeciążać API
         time.sleep(4)
 
     print("\nZapisywanie osint_crypto_register.csv...")
@@ -323,7 +364,7 @@ def run_advanced_pipeline() -> None:
         index=False, 
         encoding='utf-8'
     )
-    print("Zakończono pomyślnie!")
+    print("Zakończono pomyślnie test na 20 podmiotach!")
 
 if __name__ == "__main__":
     run_advanced_pipeline()
