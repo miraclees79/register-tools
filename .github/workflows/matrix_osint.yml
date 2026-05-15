@@ -1,0 +1,98 @@
+name: Matrix OSINT Crypto Analysis
+
+on:
+  workflow_dispatch:
+
+jobs:
+  # FAZA 1: Przygotowanie danych (ETL)
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix_config: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run ETL
+        env:
+          PYTHONPATH: .
+        run: python src/pipelines/process_ias.py
+      - name: Upload Enriched Data
+        uses: actions/upload-artifact@v4
+        with:
+          name: enriched-base
+          path: data/processed/enriched_crypto_register.csv
+
+  # FAZA 2: Macierzowe przetwarzanie LLM
+  osint-analysis:
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false # Jeśli jeden shard padnie, reszta ma pracować dalej
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6] # 7 runnerów
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Download Base Data
+        uses: actions/download-artifact@v4
+        with:
+          name: enriched-base
+          path: data/processed/
+      - name: Run Shard Analysis
+        env:
+          PYTHONPATH: .
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PYTHONUNBUFFERED: "1"
+        run: |
+          python src/pipelines/advanced_analysis.py --shard-index ${{ matrix.shard }} --total-shards 7
+      - name: Upload Shard Result
+        uses: actions/upload-artifact@v4
+        with:
+          name: shard-results-${{ matrix.shard }}
+          path: data/processed/osint_shard_${{ matrix.shard }}.csv
+
+  # FAZA 3: Łączenie wyników (Merge)
+  merge-results:
+    needs: osint-analysis
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pandas
+        run: pip install pandas
+      - name: Download All Shards
+        uses: actions/download-artifact@v4
+        with:
+          pattern: shard-results-*
+          path: data/shards/
+          merge-multiple: true
+      - name: Merge Shards
+        shell: python
+        run: |
+          import pandas as pd
+          import glob
+          import os
+          files = glob.glob("data/shards/osint_shard_*.csv")
+          # Sortowanie plików, aby zachować kolejność shardy 0-6
+          files.sort()
+          df_list = [pd.read_csv(f) for f in files]
+          final_df = pd.concat(df_list)
+          os.makedirs("data/processed", exist_ok=True)
+          final_df.to_csv("data/processed/osint_crypto_register_FINAL.csv", index=False)
+      - name: Commit Final Results
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "🤖 Matrix OSINT Complete: Global Report Updated"
+          file_pattern: 'data/processed/*.csv'

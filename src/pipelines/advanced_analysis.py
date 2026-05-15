@@ -7,6 +7,8 @@ import sys
 from bs4 import BeautifulSoup
 from ddgs import DDGS
 from google import genai  # Nowe, wspierane SDK Google
+import argparse
+import numpy as np
 
 # Inicjalizacja klienta Gemini
 GEMINI_API_KEY = os.getenv(key="GEMINI_API_KEY")
@@ -341,13 +343,46 @@ def analyze_board_member_clusters(df: pd.DataFrame) -> pd.DataFrame:
     
     return df
 
-def run_advanced_pipeline() -> None:
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    input_path = os.path.join(base_dir, "data", "processed", "enriched_crypto_register.csv")
-    output_path = os.path.join(base_dir, "data", "processed", "osint_crypto_register.csv")
+def run_advanced_pipeline(
+    shard_index: int = 0,
+    total_shards: int = 1
+) -> None:
+    base_dir = os.path.dirname(
+        p=os.path.dirname(
+            p=os.path.dirname(
+                p=os.path.abspath(path=__file__)
+            )
+        )
+    )
+    input_path = os.path.join(
+        base_dir, 
+        "data", 
+        "processed", 
+        "enriched_crypto_register.csv"
+    )
+    # Każdy shard zapisuje własny, unikalny plik
+    output_path = os.path.join(
+        base_dir, 
+        "data", 
+        "processed", 
+        f"osint_shard_{shard_index}.csv"
+    )
 
-    print("Wczytywanie bazy...")
-    df = pd.read_csv(filepath_or_buffer=input_path)
+    print(f"Wczytywanie bazy dla shardu {shard_index}/{total_shards}...")
+    df_full = pd.read_csv(filepath_or_buffer=input_path)
+
+    # --- LOGIKA SHADINGU ---
+    # Dzielimy pełny DataFrame na N części
+    shards = np.array_split(
+        ary=df_full, 
+        indices_or_sections=total_shards
+    )
+    df = shards[shard_index].copy()
+    
+    print(f"Shard {shard_index} przetworzy {len(df)} wierszy.")
+
+    # Analizy klastrowe wykonujemy na pełnym zbiorze, 
+    # aby mieć poprawne liczniki powiązań globalnych
 
     print("Analiza klastrów adresowych...")
     df = analyze_address_clusters(df=df)
@@ -367,10 +402,9 @@ def run_advanced_pipeline() -> None:
     df['website_url'] = ""
     df['ai_summary'] = ""
 
-    test_sample = df    # df.head(10) testowo
-    total = len(test_sample)
+    total = len(df)
 
-    for index, row in test_sample.iterrows():
+    for index, row in df.iterrows():
         company_name = str(row['Imię i Nazwisko / Nazwa firmy'])
         company_address = str(row['krs_adres_aktualny'])
         
@@ -425,9 +459,21 @@ def run_advanced_pipeline() -> None:
         
         time.sleep(4)
 
-    print("\nZapisywanie osint_crypto_register.csv...")
-    df.to_csv(path_or_buf=output_path, index=False, encoding='utf-8')
-    print(f"Zakończono pomyślnie przebieg na {total} podmiotach!")
+    print(f"\nZapisywanie fragmentu: {output_path}...")
+    df.to_csv(
+        path_or_buf=output_path, 
+        index=False, 
+        encoding='utf-8'
+    )
+    print(f"Zakończono pomyślnie przebieg na shardzie {shard_index} zawierającym {total} podmiotów!")
 
 if __name__ == "__main__":
-    run_advanced_pipeline()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--shard-index", type=int, default=0)
+    parser.add_argument("--total-shards", type=int, default=1)
+    args = parser.parse_args()
+
+    run_advanced_pipeline(
+        shard_index=args.shard_index,
+        total_shards=args.total_shards
+    )
