@@ -206,22 +206,25 @@ def analyze_shareholder_clusters(
 ) -> pd.DataFrame:
     """
     Wykrywa klastry powiązań kapitałowych na podstawie obecnych 
-    i historycznych udziałowców, dodając ID klastra.
+    i historycznych udziałowców, dodając ID klastra (odporne na ucięte nawiasy).
     """
     # 1. Przygotowanie danych o udziałowcach
     aktualni_udzialowcy = df['udzialowcy'].fillna('')
     historyczni_udzialowcy = df['historyczni_udzialowcy'].fillna('')
-    wszyscy_udzialowcy_raw = aktualni_udzialowcy + " | " + historyczni_udzialowcy
     
+    # Łączymy, dodając separator tylko gdy oba pola coś zawierają
+    wszyscy_udzialowcy_raw = aktualni_udzialowcy + " | " + historyczni_udzialowcy
     df['udzialowcy_lista'] = wszyscy_udzialowcy_raw.str.split(" | ")
     
-    # 2. Normalizacja (usunięcie kwot i dat)
+    # 2. Normalizacja (super-bezpieczne odcinanie od pierwszego nawiasu)
     def clean_shareholders(sh_list: list) -> list:
         cleaned_set = set()
         for sh in sh_list:
             sh_str = str(sh).strip()
             if sh_str and sh_str != "|":
-                sh_clean = re.sub(r'\[.*?\]', '', sh_str).strip()
+                # Używamy split('[') i bierzemy tylko pierwszy element [0] (to co przed nawiasem)
+                # Dzięki temu nawet jeśli brakuje zamykającego ']', reszta tekstu znika.
+                sh_clean = sh_str.split('[')[0].strip()
                 if sh_clean:
                     cleaned_set.add(sh_clean)
         return list(cleaned_set)
@@ -253,11 +256,10 @@ def analyze_shareholder_clusters(
 
     df['ryzyko_powiazan_kapitalowych'] = df['max_powiazania_udzialowca'].apply(assign_sh_risk)
     
-    # 6. Sprzątanie - kolumny ID zostają w pliku wynikowym!
+    # 6. Sprzątanie
     df.drop(columns=['udzialowcy_lista', 'znormalizowani_udzialowcy'], inplace=True)
     
     return df
-
 
 def run_advanced_pipeline() -> None:
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
