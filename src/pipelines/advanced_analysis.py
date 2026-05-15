@@ -151,17 +151,27 @@ class WebAnalyzer:
         Jeśli tekst to tylko szczątkowe informacje rejestrowe, napisz: "Brak wyraźnych informacji o profilu usług."
         """
         
-        try:
-            response = gemini_client.models.generate_content(
-                model='gemma-4-31b-it',
-                contents=prompt
-            )
-            if response.text:
-                # Usunięto argumenty nazwane old= i new=
-                return response.text.replace('\n', ' ').strip()
-            return "Brak odpowiedzi modelu."
-        except Exception as e:
-            return f"Błąd LLM: {str(e)}"
+        # Lista modeli: najpierw próbujemy potężną Gemmę, potem stabilny Flash
+        models_to_try =['gemma-4-31b-it', 'gemini-3.1-flash-lite']
+        
+        last_error = ""
+        
+        for model_name in models_to_try:
+            try:
+                response = gemini_client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config={"temperature": 0.2} # Niska temperatura dla stabilności
+                )
+                if response.text:
+                    return response.text.replace('\n', ' ').strip()
+            except Exception as e:
+                last_error = str(e)
+                print(f"Model {model_name} nie powiódł się, próbuję kolejny...")
+                time.sleep(1) # Krótka pauza przed fallbackiem
+                continue
+        
+        return f"Błąd LLM po próbach wszystkich modeli: {last_error}"
 
 
 def analyze_address_clusters(
