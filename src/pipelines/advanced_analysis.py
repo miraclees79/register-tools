@@ -209,69 +209,136 @@ def analyze_address_clusters(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+
 def analyze_shareholder_clusters(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Wykrywa klastry powiązań kapitałowych na podstawie:
+    1. Całej historii (aktualni i historyczni udziałowcy).
+    2. Tylko aktualnych udziałowców.
+    """
+    
+    # =========================================================================
+    # CZĘŚĆ 1: KLASTROWANIE NA PODSTAWIE CAŁEJ HISTORII (Tak jak do tej pory)
+    # =========================================================================
     aktualni_udzialowcy = df['udzialowcy'].fillna('')
     historyczni_udzialowcy = df['historyczni_udzialowcy'].fillna('')
     wszyscy_udzialowcy_raw = aktualni_udzialowcy + " | " + historyczni_udzialowcy
-    df['udzialowcy_lista'] = wszyscy_udzialowcy_raw.str.split(" | ")
+    
+    df['udzialowcy_lista_historia'] = wszyscy_udzialowcy_raw.str.split(" | ", regex=False)
     
     def clean_shareholders(sh_list: list) -> list:
         cleaned_set = set()
         for sh in sh_list:
             sh_str = str(sh).strip()
-            if not sh_str or sh_str == "|":
-                continue
-        
-            # 1. Usuwamy wszystko w nawiasach kwadratowych [...] 
-            # Używamy regexa, aby usunąć treść nawiasów wraz z samymi nawiasami
-            # np. "Firma [100 udziałów] [od 2021]" -> "Firma  "
-            sh_clean = re.sub(r'\[.*?\]', '', sh_str)
-        
-            # 2. Usuwamy nadmiarowe spacje powstałe po usunięciu nawiasów
-            sh_clean = " ".join(sh_clean.split()).strip()
-        
-            # 3. Opcjonalnie: Usuwamy formy prawne, aby "OVOO SP. Z O.O." i "OVOO" były tym samym
-            # Robimy to tylko jeśli w nazwie NIE MA PESEL-u (bo PESEL oznacza osobę fizyczną)
-            if "PESEL" not in sh_clean.upper():
-                formy_prawne = [
-                    "SPÓŁKA Z OGRANICZONĄ ODPOWIEDZIALNOŚCIĄ", "SP. Z O.O.", "SP. Z O. O.",
-                    "SPÓŁKA AKCYJNA", "S.A.", "PROSTA SPÓŁKA AKCYJNA", "P.S.A.",
-                    "SPÓŁKA KOMANDYTOWA", "SP. K.", "LTD", "LIMITED", "LLC"
-                ]
-                for forma in formy_prawne:
-                    # Case-insensitive replace
-                    pattern = re.compile(re.escape(forma), re.IGNORECASE)
-                    sh_clean = pattern.sub("", sh_clean)
-                sh_clean = " ".join(sh_clean.split()).strip()
-
-            # 4. Filtr bezpieczeństwa - ignorujemy puste stringi lub pojedyncze znaki
-            if len(sh_clean) > 1:
-                cleaned_set.add(sh_clean)
-            
+            if sh_str and sh_str != "|":
+                sub_shareholders = re.split(r'\s\|\s|,\s', sh_str)
+                for sub_sh in sub_shareholders:
+                    sub_sh = sub_sh.strip()
+                    if not sub_sh: continue
+                    sh_clean = sub_sh.split('[')[0].strip()
+                    if "PESEL" not in sh_clean.upper():
+                        formy_prawne = ["SPÓŁKA Z OGRANICZONĄ ODPOWIEDZIALNOŚCIĄ", "SP. Z O.O.", "SP. Z O. O.", "SPÓŁKA AKCYJNA", "S.A.", "PROSTA SPÓŁKA AKCYJNA", "P.S.A.", "SPÓŁKA KOMANDYTOWA", "SP. K.", "LTD", "LIMITED", "LLC"]
+                        for forma in formy_prawne:
+                            pattern = r'\b' + re.escape(forma) + r'\b'
+                            sh_clean = re.sub(pattern, "", sh_clean, flags=re.IGNORECASE)
+                    sh_clean = " ".join(sh_clean.split()).strip()
+                    if len(sh_clean) > 3:
+                        cleaned_set.add(sh_clean)
         return list(cleaned_set)
         
-    df['znormalizowani_udzialowcy'] = df['udzialowcy_lista'].apply(clean_shareholders)
-    exploded_sh = df['znormalizowani_udzialowcy'].explode().dropna()
-    sh_counts = exploded_sh.value_counts()
+    df['znormalizowani_udzialowcy_historia'] = df['udzialowcy_lista_historia'].apply(clean_shareholders)
+    exploded_sh_historia = df['znormalizowani_udzialowcy_historia'].explode().dropna()
+    sh_counts_historia = exploded_sh_historia.value_counts()
     
-    def get_max_sh_cluster_size(sh_list: list) -> int:
-        if not sh_list: return 0
-        return max([sh_counts.get(s, 0) for s in sh_list])
+    df['max_powiazania_udzialowca_historia'] = df['znormalizowani_udzialowcy_historia'].apply(lambda l: max([sh_counts_historia.get(s, 0) for s in l]) if l else 0)
+    df['klaster_udzialowca_id_historia'] = df['znormalizowani_udzialowcy_historia'].apply(lambda l: max(l, key=lambda s: sh_counts_historia.get(s, 0)) if l else "")
+    
+    df['ryzyko_powiazan_kapitalowych_historia'] = df['max_powiazania_udzialowca_historia'].apply(lambda x: 'Wysokie' if x >= 3 else ('Średnie' if x == 2 else 'Niskie'))
+    
+    # =========================================================================
+    # CZĘŚĆ 2: NOWA LOGIKA - KLASTROWANIE TYLKO NA OBECNYCH UDZIAŁOWCACH
+    # =========================================================================
+    df['udzialowcy_lista_aktualni'] = df['udzialowcy'].fillna('').str.split(" | ", regex=False)
+    
+    # Używamy tej samej funkcji czyszczącej, co wcześniej
+    df['znormalizowani_udzialowcy_aktualni'] = df['udzialowcy_lista_aktualni'].apply(clean_shareholders)
+    exploded_sh_aktualni = df['znormalizowani_udzialowcy_aktualni'].explode().dropna()
+    sh_counts_aktualni = exploded_sh_aktualni.value_counts()
+    
+    # Tworzymy nowe kolumny dla klastrów aktualnych
+    df['max_powiazania_udzialowca_aktualni'] = df['znormalizowani_udzialowcy_aktualni'].apply(lambda l: max([sh_counts_aktualni.get(s, 0) for s in l]) if l else 0)
+    df['klaster_udzialowca_id_aktualni'] = df['znormalizowani_udzialowcy_aktualni'].apply(lambda l: max(l, key=lambda s: sh_counts_aktualni.get(s, 0)) if l else "")
+    
+    # =========================================================================
+    # SPRZĄTANIE (Usuwamy wszystkie kolumny tymczasowe)
+    # =========================================================================
+    df.drop(
+        columns=[
+            'udzialowcy_lista_historia', 
+            'znormalizowani_udzialowcy_historia',
+            'udzialowcy_lista_aktualni',
+            'znormalizowani_udzialowcy_aktualni'
+        ], 
+        inplace=True
+    )
+    
+    return df
+
+
+def analyze_board_member_clusters(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Wykrywa klastry powiązań osobowych na podstawie obecnych 
+    członków zarządu/osób decyzyjnych.
+    """
+    
+    # KROK 1: Przygotowanie danych wejściowych
+    # Pracujemy tylko na kolumnie 'osoby_decyzyjne' (aktualni)
+    aktualni_czlonkowie = df['osoby_decyzyjne'].fillna('')
+    
+    # KROK 2: Podział na listę osób
+    df['zarzad_lista'] = aktualni_czlonkowie.str.split(" | ", regex=False)
+
+    # KROK 3: Funkcja czyszcząca
+    def clean_board_members(bm_list: list) -> list:
+        cleaned_set = set()
+        for bm in bm_list:
+            bm_str = str(bm).strip()
+            if not bm_str or bm_str == "|":
+                continue
+
+            # Rozdzielamy na wypadek wielu osób w jednym stringu (bezpiecznik)
+            sub_members = re.split(r'\s\|\s|,\s', bm_str)
+            for sub_bm in sub_members:
+                sub_bm = sub_bm.strip()
+                if not sub_bm: continue
+
+                # Odcinamy metadane (wszystko od pierwszej daty w nawiasie '[')
+                bm_clean = sub_bm.split('[')[0].strip()
+                
+                # Usuwamy funkcję w zarządzie, np. "(PREZES ZARZĄDU)"
+                # To pozwala na połączenie tej samej osoby, nawet jeśli zmieniła funkcję
+                bm_clean = re.sub(r'\(.*?\)', '', bm_clean).strip()
+                
+                # Finalne czyszczenie podwójnych spacji
+                bm_clean = " ".join(bm_clean.split()).strip()
+
+                if len(bm_clean) > 3:
+                    cleaned_set.add(bm_clean)
+        return list(cleaned_set)
         
-    def get_main_sh_cluster_id(sh_list: list) -> str:
-        if not sh_list: return ""
-        return max(sh_list, key=lambda sh: sh_counts.get(sh, 0))
+    df['znormalizowani_czlonkowie_zarzadu'] = df['zarzad_lista'].apply(clean_board_members)
     
-    df['max_powiazania_udzialowca'] = df['znormalizowani_udzialowcy'].apply(get_max_sh_cluster_size)
-    df['klaster_udzialowca_id'] = df['znormalizowani_udzialowcy'].apply(get_main_sh_cluster_id)
-
-    def assign_sh_risk(cluster_size: int) -> str:
-        if cluster_size >= 3: return 'Wysokie'
-        if cluster_size == 2: return 'Średnie'
-        return 'Niskie'
-
-    df['ryzyko_powiazan_kapitalowych'] = df['max_powiazania_udzialowca'].apply(assign_sh_risk)
-    df.drop(columns=['udzialowcy_lista', 'znormalizowani_udzialowcy'], inplace=True)
+    # KROK 4: Globalne zliczenie wystąpień
+    exploded_bm = df['znormalizowani_czlonkowie_zarzadu'].explode().dropna()
+    bm_counts = exploded_bm.value_counts()
+    
+    # KROK 5: Wyciągnięcie metryk i ID klastra
+    df['max_powiazania_zarzadu'] = df['znormalizowani_czlonkowie_zarzadu'].apply(lambda l: max([bm_counts.get(s, 0) for s in l]) if l else 0)
+    df['klaster_zarzadu_id'] = df['znormalizowani_czlonkowie_zarzadu'].apply(lambda l: max(l, key=lambda s: bm_counts.get(s, 0)) if l else "")
+    
+    # KROK 6: Sprzątanie
+    df.drop(columns=['zarzad_lista', 'znormalizowani_czlonkowie_zarzadu'], inplace=True)
+    
     return df
 
 def run_advanced_pipeline() -> None:
@@ -290,6 +357,9 @@ def run_advanced_pipeline() -> None:
 
     print("Analiza powiązań udziałowców (kapitałowych)...")
     df = analyze_shareholder_clusters(df=df)
+    
+    print("Analiza powiązań osób decyzyjnych (zarząd)...")
+    df = analyze_board_member_clusters(df=df)
 
     print("Uruchamianie wyszukiwania i analizy LLM (to może potrwać)...")
     analyzer = WebAnalyzer()
@@ -297,7 +367,7 @@ def run_advanced_pipeline() -> None:
     df['website_url'] = ""
     df['ai_summary'] = ""
 
-    test_sample = df.head(20)
+    test_sample = df    # df.head(10) testowo
     total = len(test_sample)
 
     for index, row in test_sample.iterrows():
