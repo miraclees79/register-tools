@@ -31,7 +31,7 @@ class BankingLicenseVerifier:
         self.ddgs = DDGS()
 
     def check_banking_license(self, company_name: str, lei: str, website: str, address: str) -> str:
-        query = f'Does company "{company_name}" (LEI: {lei}) have an EU banking license?'
+        query = f'"{company_name}" banking license EU authorisation'
     
         # 1. Pobranie wyników wyszukiwania (to robimy zawsze)
         try:
@@ -39,13 +39,18 @@ class BankingLicenseVerifier:
             search_context = "\n".join([f"Source: {r.get('href')}\nText: {r.get('body')}" for r in results])
         except Exception as e:
             return f"Search Error: {e}"
-            
+
         prompt = f"""
-        ROLE: Financial OSINT Analyst.
-        TASK: Determine if {company_name} (LEI: {lei}) with website at: {website} and headquarters at {address} has an EU banking license based on the context.
-        CONTEXT: {search_context}
-        OUTPUT: Provide "TAK [Authority Name]", "NIE", or "BRAK DANYCH". No other text.
-        """
+        Jesteś ekspertem ds. regulacji bankowych w UE.
+        Podmiot: {company_name} (LEI: {lei}), website: {website} siedziba: {address}
+        Wyniki wyszukiwania: {search_context}
+        
+        Zadanie:
+        1. Jeśli nazwa podmiotu zawiera "Bank" lub "Banco" i jest to znany podmiot, jest możliwe, że posiada licencję bankową.
+        2. Czy na podstawie kontekstu lub wiedzy ogólnej podmiot ten jest licencjonowanym bankiem w UE?
+        3. Odpowiedz: "TAK [Nazwa Organu]" lub "NIE". Jeśli nie masz pewności, napisz "BRAK DANYCH".
+        """    
+        
     
         # 2. Próba z użyciem "Retry" i Fallbacku
         models_to_try =['gemma-4-26b-a4b-it', 'gemma-4-31b-it', 'gemini-3.1-flash-lite']
@@ -67,8 +72,10 @@ class BankingLicenseVerifier:
                 if i < len(models_to_try) - 1:
                     next_model = models_to_try[i+1]
                     tqdm.write(f"⚠️ Model {model_name} nie powiódł się (500/503). Przełączam na {next_model} dla {company_name[:20]}...")
-            
+                    sys.stderr.flush()
                 if "500" in err_str or "503" in err_str or "INTERNAL" in err_str:
+                    tqdm.write(f"⚠️ {err_str}")
+                    sys.stderr.flush() 
                     time.sleep(3)
                 continue
             
