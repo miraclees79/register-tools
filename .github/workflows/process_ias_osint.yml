@@ -14,11 +14,7 @@ on:
         default: false
         type: boolean
   
-  push:
-    branches:
-      - main
-    paths:
-      - 'data/raw/**'
+
 
 jobs:
   build-and-run:
