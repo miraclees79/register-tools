@@ -233,7 +233,9 @@ async def run_esma_pipeline() -> None:
     for index, row in tqdm(df_final.head(20).iterrows(), 
                         total=20, 
                         desc="Weryfikacja Banków",
-                        disable=is_ci):
+                        ascii=True,    # Używa znaków ASCII zamiast specjalnych bloków UTF-8
+                        ncols=100      # Ustawia stałą szerokość paska, co pomaga w logach GH:
+                        ):
         try:
             status = verifier.check_banking_license(
                 company_name=row['ae_lei_name'],

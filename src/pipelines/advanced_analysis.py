@@ -346,7 +346,9 @@ def run_advanced_pipeline() -> None:
     for index, row in tqdm(iterable=df.head(20).iterrows(), 
                         total=20, 
                         desc="Analiza AI", 
-                        disable=is_ci):
+                        ascii=True,    # Używa znaków ASCII zamiast specjalnych bloków UTF-8
+                        ncols=100      # Ustawia stałą szerokość paska, co pomaga w logach GH:
+                        ):
         company_name = str(row['Imię i Nazwisko / Nazwa firmy'])
         company_address = str(row['krs_adres_aktualny'])
         # ==========================================
