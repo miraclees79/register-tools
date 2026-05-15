@@ -42,7 +42,7 @@ class BankingLicenseVerifier:
             
         prompt = f"""
         ROLE: Financial OSINT Analyst.
-        TASK: Determine if {company_name} (LEI: {lei}) has an EU banking license based on the context.
+        TASK: Determine if {company_name} (LEI: {lei}) with website at: {website} and headquarters at {address} has an EU banking license based on the context.
         CONTEXT: {search_context}
         OUTPUT: Provide "TAK [Authority Name]", "NIE", or "BRAK DANYCH". No other text.
         """
