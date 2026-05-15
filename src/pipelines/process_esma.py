@@ -104,7 +104,7 @@ def process_esma_data(df: pd.DataFrame, entity_types: dict) -> pd.DataFrame:
     }
     
     for col_name, search_phrase in uslugi.items():
-        df[col_name] = df['ac_comments'].str.lower().fillna('').apply(
+        df[col_name] = df['ac_serviceCode'].str.lower().fillna('').apply(
             lambda x: 1 if search_phrase.lower() in x else 0
         )
         
