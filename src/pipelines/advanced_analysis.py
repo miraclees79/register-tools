@@ -153,28 +153,30 @@ class WebAnalyzer:
         
         # Lista modeli: najpierw próbujemy potężną Gemmę, potem stabilny Flash
         models_to_try =['gemma-4-26b-a4b-it', 'gemma-4-31b-it', 'gemini-3.1-flash-lite']
-        
-        last_error = ""
-        
-        for model_name in models_to_try:
+        last_error_msg = "Unknown error"
+    
+        for i, model_name in enumerate(models_to_try):
             try:
                 response = gemini_client.models.generate_content(
                     model=model_name,
                     contents=prompt,
-                    config={"temperature": 0.2} # Niska temperatura dla stabilności
-                )
-                if response.text:
-                    return response.text.replace('\n', ' ').strip()
+                    config={"temperature": 0.1}
+                )   
+                return response.text.strip()
             except Exception as e:
                 err_str = str(e)
-                last_error = err_str
-                print(f"Model {model_name} failed: {err_str[:50]}...")
-                time.sleep(1) # Krótka pauza przed fallbackiem
-                if "500" in str(e) or "503" in str(e):
-                    time.sleep(5)
+                last_error_msg = err_str
+            
+                # Jeśli to nie jest ostatni model na liście, informujemy o przejściu na kolejny
+                if i < len(models_to_try) - 1:
+                    next_model = models_to_try[i+1]
+                    tqdm.write(f"⚠️ Model {model_name} nie powiódł się (500/503). Przełączam na {next_model} dla {company_name[:20]}...")
+            
+                if "500" in err_str or "503" in err_str or "INTERNAL" in err_str:
+                    time.sleep(3)
                 continue
-        
-        return f"Błąd LLM po próbach wszystkich modeli: {last_error}"
+            
+        return f"Final Error: {last_error_msg}"
 
 
 def analyze_address_clusters(

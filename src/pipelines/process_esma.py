@@ -47,25 +47,28 @@ class BankingLicenseVerifier:
         """
     
         # 2. Próba z użyciem "Retry" i Fallbacku
-        models_to_try = ['gemma-4-26b-a4b-it', 'gemma-4-31b-it', 'gemini-3.1-flash-lite']
+        models_to_try =['gemma-4-26b-a4b-it', 'gemma-4-31b-it', 'gemini-3.1-flash-lite']
         last_error_msg = "Unknown error"
-        for model_name in models_to_try:
+    
+        for i, model_name in enumerate(models_to_try):
             try:
                 response = gemini_client.models.generate_content(
                     model=model_name,
                     contents=prompt,
-                    config={"temperature": 0.1} # Niska temperatura = mniej halucynacji
-                )
+                    config={"temperature": 0.1}
+                )   
                 return response.text.strip()
             except Exception as e:
-                # Zapisujemy błąd w zmiennej zewnętrznej względem bloku try
                 err_str = str(e)
                 last_error_msg = err_str
-                print(f"Model {model_name} failed: {err_str[:50]}...")
-                
-                # Jeśli błąd to 500 lub 503, czekamy dłużej
+            
+                # Jeśli to nie jest ostatni model na liście, informujemy o przejściu na kolejny
+                if i < len(models_to_try) - 1:
+                    next_model = models_to_try[i+1]
+                    tqdm.write(f"⚠️ Model {model_name} nie powiódł się (500/503). Przełączam na {next_model} dla {company_name[:20]}...")
+            
                 if "500" in err_str or "503" in err_str or "INTERNAL" in err_str:
-                    time.sleep(5)
+                    time.sleep(3)
                 continue
             
         return f"Final Error: {last_error_msg}"
@@ -220,13 +223,25 @@ async def run_esma_pipeline() -> None:
     
     # Testowo na 20 pierwszych dla oszczędności czasu
     for index, row in tqdm(df_final.head(20).iterrows(), total=20, desc="Weryfikacja Banków"):
-        status = verifier.check_banking_license(
-            company_name=row['ae_lei_name'],
-            lei=row['ae_lei'],
-            website=row['ae_website'],
-            address=row['ae_address']
-        )
-        df_final.at[index, 'Banking License Status'] = status
+        try:
+            status = verifier.check_banking_license(
+                company_name=row['ae_lei_name'],
+                lei=row['ae_lei'],
+                website=row['ae_website'],
+                address=row['ae_address']
+            )
+            
+            # Jeśli funkcja zwróciła błąd w tekście, wypiszmy go jako ostrzeżenie
+            if "Error:" in status or "500" in status:
+                tqdm.write(f"Ostrzeżenie dla {row['ae_lei_name']}: {status}")
+            
+            df_final.at[index, 'Banking License Status'] = status
+            
+        except Exception as e:
+            # To jest "błąd krytyczny" pętli
+            tqdm.write(f"KRYTYCZNY błąd w pętli dla {row['ae_lei_name']}: {e}")
+            df_final.at[index, 'Banking License Status'] = "CRITICAL_FAILURE"
+            
         time.sleep(4) # Rate limiting dla DDG
     
     # KROK 3: Przetwarzanie (Klasyfikacja)
