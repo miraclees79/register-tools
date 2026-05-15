@@ -241,7 +241,7 @@ async def run_esma_pipeline() -> None:
     verifier = BankingLicenseVerifier(pdf_verifier=pdf_verifier)
     df_final['Banking License Status'] = ""
     
-    test_sample = df_final.head(20)
+    test_sample = df_final
     total = len(test_sample)
     
     for index, row in test_sample.iterrows():
