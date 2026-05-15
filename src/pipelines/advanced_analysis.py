@@ -26,6 +26,7 @@ class WebAnalyzer:
     def find_websites(
         self, 
         company_name: str,
+        company_address: str,
         shareholder_name: str | None = None
     ) -> list:
         # Zestaw form prawnych do usunięcia, aby szukać "czystej" nazwy marki
@@ -43,7 +44,7 @@ class WebAnalyzer:
         clean_company = " ".join(clean_company.split())
         
         # Budowa zapytania bazowego (np. "DIWISS" krypto)
-        search_query = f'"{clean_company}" krypto'
+        search_query = f'"{clean_company}" adres: {company_address} krypto'
         
         # 2. Czyszczenie nazwy udziałowca (jeśli jest i nie jest zanonimizowany PESELem)
         if shareholder_name and "PESEL" not in shareholder_name:
@@ -126,7 +127,8 @@ class WebAnalyzer:
 
     def synthesize_with_llm(
         self, 
-        company_name: str, 
+        company_name: str,
+        company_address: str, 
         website_text: str
     ) -> str:
         if not gemini_client: 
@@ -138,6 +140,7 @@ class WebAnalyzer:
         Jesteś analitykiem finansowym (OSINT) badającym rynek kryptowalut.
         Poniżej znajduje się tekst z maksymalnie 3 najlepszych stron WWW powiązanych z podmiotem (VASP).
         Nazwa podmiotu: {company_name}
+        Adres siedziby: {company_address}
         
         Tekst ze stron:
         {website_text}
@@ -150,7 +153,7 @@ class WebAnalyzer:
         
         try:
             response = gemini_client.models.generate_content(
-                model='gemini-2.5-flash',
+                model='gemma-4-31b-it',
                 contents=prompt
             )
             if response.text:
@@ -323,7 +326,7 @@ def run_advanced_pipeline() -> None:
     # Używamy head(20) w celu puszczenia testu na 20 pierwszych podmiotach
     for index, row in tqdm(iterable=df.head(20).iterrows(), total=20, desc="Analiza AI"):
         company_name = str(row['Imię i Nazwisko / Nazwa firmy'])
-        
+        company_address = str(row['krs_adres_aktualny'])
         # ==========================================
         # FILTROWANIE PODMIOTÓW AKTYWNYCH
         # ==========================================
@@ -348,7 +351,8 @@ def run_advanced_pipeline() -> None:
         # Szukamy do 3 przefiltrowanych linków
         urls = analyzer.find_websites(
             company_name=company_name,
-            shareholder_name=main_shareholder
+            shareholder_name=main_shareholder,
+            company_address=company_address
         )
         
         # Zapisujemy znalezione linki oddzielone znakiem |
@@ -368,6 +372,7 @@ def run_advanced_pipeline() -> None:
             if len(combined_text) > 50:
                 summary = analyzer.synthesize_with_llm(
                     company_name=company_name, 
+                    company_address=company_address,
                     # Przekazujemy scalony tekst obcięty do 8000 znaków dla bezpieczeństwa
                     website_text=combined_text[:8000] 
                 )

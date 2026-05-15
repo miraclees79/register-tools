@@ -49,7 +49,7 @@ class BankingLicenseVerifier:
             """
             
             response = gemini_client.models.generate_content(
-                model='gemini-3.1-flash-lite',
+                model='gemma-4-31b-it',
                 contents=prompt
             )
             return response.text.strip()
