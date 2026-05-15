@@ -190,21 +190,19 @@ async def run_esma_pipeline() -> None:
     df_esma = extractor.fetch_and_clean_csv()
     print(f"Pobrano {len(df_esma)} podmiotów z rejestru ESMA.")
     
-    # KROK 2: Wzbogacanie
+    # KROK 2: Wzbogacanie (API ESMA)
     enricher = EsmaApiEnricher()
     leis_to_check = df_esma['ae_lei'].unique().tolist()
-    
-    # Zmieniona nazwa zmiennej na 'classifications' dla jasności
     classifications = await enricher.fetch_all_classifications(leis=leis_to_check)
 
+    # --- TUTAJ POPRAWKA ---
+    # Tworzymy df_final na podstawie pobranego df_esma, aby móc do niego dopisywać dane
+    df_final = df_esma.copy() 
     
-    
-    
-
     print("Weryfikacja licencji bankowych (to może zająć chwilę)...")
     verifier = BankingLicenseVerifier()
     
-    # Dodajemy kolumnę na wyniki
+    # Dodajemy kolumnę na wyniki - teraz df_final już istnieje!
     df_final['Banking License Status'] = ""
     
     # Testowo na 20 pierwszych dla oszczędności czasu
@@ -218,12 +216,17 @@ async def run_esma_pipeline() -> None:
         df_final.at[index, 'Banking License Status'] = status
         time.sleep(4) # Rate limiting dla DDG
     
-    # KROK 3: Przetwarzanie i zapis
-    df_final = process_esma_data(df=df_esma, entity_types=classifications)
+    # KROK 3: Przetwarzanie (Klasyfikacja)
+    # Teraz przekazujemy df_final (który ma już kolumnę Banking License Status)
+    df_final = process_esma_data(df=df_final, entity_types=classifications)
     
     # Zapis
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     output_path = os.path.join(base_dir, "data", "processed", "esma_casps_enriched.csv")
+    
+    # Upewnij się, że folder istnieje
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    
     df_final.to_csv(output_path, index=False, encoding='utf-8')
     
     print(f"Sukces! Plik zapisano w: {output_path}")
