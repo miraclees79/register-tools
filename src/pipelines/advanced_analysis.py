@@ -166,8 +166,9 @@ class WebAnalyzer:
                 if response.text:
                     return response.text.replace('\n', ' ').strip()
             except Exception as e:
-                last_error = str(e)
-                print(f"Model {model_name} nie powiódł się, próbuję kolejny...")
+                err_str = str(e)
+                last_error = err_str
+                print(f"Model {model_name} failed: {err_str[:50]}...")
                 time.sleep(1) # Krótka pauza przed fallbackiem
                 if "500" in str(e) or "503" in str(e):
                     time.sleep(5)

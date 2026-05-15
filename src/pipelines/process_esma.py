@@ -48,7 +48,7 @@ class BankingLicenseVerifier:
     
         # 2. Próba z użyciem "Retry" i Fallbacku
         models_to_try = ['gemma-4-26b-a4b-it', 'gemma-4-31b-it', 'gemini-3.1-flash-lite']
-    
+        last_error_msg = "Unknown error"
         for model_name in models_to_try:
             try:
                 response = gemini_client.models.generate_content(
@@ -57,14 +57,18 @@ class BankingLicenseVerifier:
                     config={"temperature": 0.1} # Niska temperatura = mniej halucynacji
                 )
                 return response.text.strip()
-            except Exception:
-                print(f"Model {model_name} failed. Trying next...")
-                time.sleep(2) # Krótka pauza przed fallbackiem
-                if "500" in str(e) or "503" in str(e):
+            except Exception as e:
+                # Zapisujemy błąd w zmiennej zewnętrznej względem bloku try
+                err_str = str(e)
+                last_error_msg = err_str
+                print(f"Model {model_name} failed: {err_str[:50]}...")
+                
+                # Jeśli błąd to 500 lub 503, czekamy dłużej
+                if "500" in err_str or "503" in err_str or "INTERNAL" in err_str:
                     time.sleep(5)
                 continue
             
-        return "Error: All models failed"
+        return f"Final Error: {last_error_msg}"
 
 class EsmaCsvExtractor:
     """Pobiera i wstępnie czyści dane CASP z pliku CSV od ESMA."""
