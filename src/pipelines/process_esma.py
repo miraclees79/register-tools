@@ -2,7 +2,7 @@ import pandas as pd
 import requests
 import asyncio
 import aiohttp
-from tqdm.asyncio import tqdm
+from tqdm.asyncio import tqdm as async_tqdm
 import os
 import re
 from bs4 import BeautifulSoup
@@ -121,13 +121,11 @@ class EsmaApiEnricher:
     async def fetch_all_classifications(self, leis: list[str]) -> dict:
         """Pobiera klasyfikacje dla całej listy kodów LEI asynchronicznie."""
         async with aiohttp.ClientSession() as session:
-            # Tworzymy listę zadań (tasks)
             tasks =[self.fetch_entity_classification(session, lei) for lei in leis]
             
-            # Używamy tqdm do paska postępu
-            responses = await tqdm.gather(*tasks, desc="Weryfikacja statusów w API ESMA")
+            # Poprawne wywołanie: async_tqdm.gather
+            responses = await async_tqdm.gather(*tasks, desc="Weryfikacja statusów w API ESMA")
             
-            # Łączymy LEI z wynikami w słownik
             return dict(zip(leis, responses))
             
 def process_esma_data(df: pd.DataFrame, entity_types: dict) -> pd.DataFrame:
