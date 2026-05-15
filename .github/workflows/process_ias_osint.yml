@@ -1,4 +1,4 @@
-name: Crypto Registry ETL & OSINT Pipeline
+name: IAS Katowice Registry ETL & OSINT Pipeline
 
 on:
   workflow_dispatch:
