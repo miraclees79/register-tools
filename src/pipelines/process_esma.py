@@ -25,46 +25,60 @@ class EsmaCsvExtractor:
 class EsmaApiEnricher:
     """Wzbogaca dane o typ podmiotu na podstawie API ESMA."""
     
-    BASE_URL = "https://registers.esma.europa.eu/solr/esma_registers_entities_rev/select"
-    
-    async def fetch_entity_type(self, session: aiohttp.ClientSession, lei: str) -> str:
-        """Asynchronicznie pobiera dane dla pojedynczego kodu LEI."""
-        if not lei:
-            return ""
+    async def fetch_entity_classification(self, session: aiohttp.ClientSession, lei: str) -> str:
+        """
+        Pobiera klasyfikację korzystając z rdzenia upreg, 
+        używając pola ae_lei zgodnie z dokumentacją.
+        """
+        if not lei: return ""
         
-        # ==========================================================
-        # OSTATECZNA POPRAWKA: Pole wyszukiwania w API to 'id', a nie 'LEI'
-        # ==========================================================
-        params = {'q': f'id:"{lei}"', 'wt': 'json'}
+        url = "https://registers.esma.europa.eu/solr/esma_registers_upreg/select"
+        
+        # Zgodnie z Twoim linkiem do dokumentacji:
+        # q=ae_lei:"{lei}" - wyszukiwanie w polu ae_lei
+        # fq=type_s:parent - filtrujemy tylko rekordy główne
+        # rows=1 - bierzemy pierwszy dopasowany
+        params = {
+            'q': f'ae_lei:"{lei}"',
+            'fq': 'type_s:parent',
+            'rows': '1',
+            'wt': 'json'
+        }
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
         
         try:
-            async with session.get(url=self.BASE_URL, params=params) as response:
+            async with session.get(url=url, params=params, headers=headers) as response:
                 if response.status == 200:
                     data = await response.json()
-                    docs = data.get('response', {}).get('docs', [])
+                    docs = data.get('response', {}).get('docs',[])
+                    
                     if docs:
-                        return docs[0].get('entity_type', 'Unknown')
-                return "Not Found"
-        except Exception:
-            return "API Error"
-            
-    async def fetch_all_entity_types(self, leis: list[str]) -> dict:
-        """Pobiera typy dla całej listy kodów LEI asynchronicznie."""
-        results = {}
-        async with aiohttp.ClientSession() as session:
-            tasks = [self.fetch_entity_type(session=session, lei=lei) for lei in leis]
-            api_responses = await tqdm.gather(*tasks, desc="Odpytywanie API ESMA")
-            for lei, entity_type in zip(leis, api_responses):
-                results[lei] = entity_type
-        return results
+                        # Teraz bierzemy 'ae_entityTypeLabel' zgodnie z tym co zwróciło API
+                        entity_type = docs[0].get('ae_entityTypeLabel', '')
+                        
+                        # Jeśli jest listą, łączymy, jeśli stringiem, zwracamy
+                        if isinstance(entity_type, list):
+                            return " | ".join([str(x) for x in entity_type])
+                        return str(entity_type)
+                
+                # Jeśli status nie 200 lub brak docs, zwracamy pusty string
+                return ""
+        except Exception as e:
+            print(f"Błąd API ESMA dla LEI {lei}: {e}")
+            return ""
 
 def process_esma_data(df: pd.DataFrame, entity_types: dict) -> pd.DataFrame:
     """Przetwarza DataFrame, dodając nowe kolumny i flagi."""
     
+    # 1. Flaga "Działalność w Polsce?"
     df['Działalność w Polsce?'] = df['ac_serviceCode_cou'].apply(
         lambda x: 'PRAWDA' if 'PL' in str(x).split('|') else 'FAŁSZ'
     )
     
+    # 2. Usługi (z poprawionymi frazami)
     uslugi = {
         "Usługi - a. custody": "providing custody",
         "Usługi - b. trading platform": "operating a trading platform",
@@ -79,51 +93,54 @@ def process_esma_data(df: pd.DataFrame, entity_types: dict) -> pd.DataFrame:
     }
     
     for col_name, search_phrase in uslugi.items():
-        # POPRAWKA: Przeszukiwanie właściwej kolumny 'ac_comments'
-        df[col_name] = df['ac_comments'].str.lower().apply(
-            lambda x: 1 if search_phrase in x else 0
+        df[col_name] = df['ac_comments'].str.lower().fillna('').apply(
+            lambda x: 1 if search_phrase.lower() in x else 0
         )
         
-    df['ESMA - Typ Podmiotu'] = df['ae_lei'].map(entity_types)
+    # 3. Mapowanie typu podmiotu z API
+    df['ESMA - Typ Podmiotu'] = df['ae_lei'].map(entity_types).fillna('')
     
+    # 4. Klasyfikacja - szukamy w nowym polu 'ae_entityTypeLabel' (które teraz jest w kolumnie ESMA - Typ Podmiotu)
+    # Mapujemy wartości z ESMA na Twoje kolumny
     klasyfikacja = {
-        "Bank": "Credit institution",
-        "FI": "Investment Firm",
-        "Fiinfra": "Financial infrastructure entity",
-        "AssetMgmt": "Asset management entity"
+        "Bank": "credit institution",
+        "FI": "investment firm",
+        "Fiinfra": "financial infrastructure",
+        "AssetMgmt": "asset management"
     }
     
     for col_name, search_phrase in klasyfikacja.items():
-        df[col_name] = df['ESMA - Typ Podmiotu'].apply(
-            lambda x: 1 if search_phrase in str(x) else 0
+        df[col_name] = df['ESMA - Typ Podmiotu'].str.lower().apply(
+            lambda x: 1 if search_phrase in x else 0
         )
         
     return df
 
 async def run_esma_pipeline() -> None:
-    """Główna funkcja uruchamiająca cały pipeline dla danych ESMA."""
+    """Główna funkcja uruchamiająca cały pipeline."""
     
-    print("Pobieranie pliku CSV z rejestrem CASP od ESMA...")
+    # KROK 1: Ekstrakcja
     csv_url = "https://www.esma.europa.eu/sites/default/files/2024-12/CASPS.csv"
     extractor = EsmaCsvExtractor(url=csv_url)
     df_esma = extractor.fetch_and_clean_csv()
-    
     print(f"Pobrano {len(df_esma)} podmiotów z rejestru ESMA.")
     
-    print("Wzbogacanie danych o typ podmiotu z API ESMA (to może potrwać)...")
+    # KROK 2: Wzbogacanie
     enricher = EsmaApiEnricher()
     leis_to_check = df_esma['ae_lei'].unique().tolist()
-    entity_types_map = await enricher.fetch_all_entity_types(leis=leis_to_check)
     
-    print("Przetwarzanie danych i generowanie flag...")
-    df_final = process_esma_data(df=df_esma, entity_types=entity_types_map)
+    # Zmieniona nazwa zmiennej na 'classifications' dla jasności
+    classifications = await enricher.fetch_all_classifications(leis=leis_to_check)
     
+    # KROK 3: Przetwarzanie i zapis
+    df_final = process_esma_data(df=df_esma, entity_types=classifications)
+    
+    # Zapis
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     output_path = os.path.join(base_dir, "data", "processed", "esma_casps_enriched.csv")
+    df_final.to_csv(output_path, index=False, encoding='utf-8')
     
-    df_final.to_csv(path_or_buf=output_path, index=False, encoding='utf-8')
-    
-    print(f"Sukces! Przetworzone dane ESMA zapisano w pliku: {output_path}")
+    print(f"Sukces! Plik zapisano w: {output_path}")
 
 if __name__ == "__main__":
     asyncio.run(run_esma_pipeline())
