@@ -7,5 +7,3 @@ tqdm
 google-genai
 aiohttp
 rapidfuzz 
-shutil
-zipfile
