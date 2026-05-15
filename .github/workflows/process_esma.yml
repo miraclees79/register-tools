@@ -1,0 +1,58 @@
+name: ESMA CASP Register ETL
+
+on:
+  # 1. Możliwość ręcznego uruchomienia z interfejsu GitHub Actions
+  workflow_dispatch:
+  
+
+jobs:
+  run-esma-etl:
+    runs-on: ubuntu-latest
+    # Uprawnienia wymagane, aby bot mógł wysłać zmiany z powrotem do repozytorium
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Upewniamy się, że aiohttp i inne pakiety są zainstalowane
+          pip install -r requirements.txt
+
+      - name: Ensure data directories exist
+        run: |
+          mkdir -p data/processed
+
+      # Krok główny: Uruchomienie skryptu do przetwarzania danych ESMA
+      - name: Run ESMA Data Processing Pipeline
+        env:
+          # Ustawienie PYTHONPATH jest kluczowe, aby importy z folderu src/ działały
+          PYTHONPATH: .
+        run: python src/pipelines/process_esma.py
+
+      # Krok opcjonalny: Zapisanie przetworzonego pliku jako artefaktu
+      - name: Upload ESMA Processed Data
+        uses: actions/upload-artifact@v4
+        with:
+          name: esma-casp-data
+          path: data/processed/esma_casps_enriched.csv
+          retention-days: 30
+
+      # Krok opcjonalny: Automatyczny commit i push przetworzonych danych do repozytorium
+      - name: Commit and Push ESMA Data
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "🤖 Auto-update: Przetworzone dane z rejestru ESMA CASP"
+          # Wskazujemy konkretny plik, aby uniknąć przypadkowych commitów
+          file_pattern: 'data/processed/esma_casps_enriched.csv'
+          commit_user_name: "github-actions[bot]"
+          commit_user_email: "github-actions[bot]@users.noreply.github.com"
