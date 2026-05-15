@@ -28,21 +28,44 @@ class WebAnalyzer:
         company_name: str,
         shareholder_name: str | None = None
     ) -> list:
-        search_query = f'"{company_name}" krypto'
+        # Zestaw form prawnych do usunięcia, aby szukać "czystej" nazwy marki
+        formy_prawne = [
+            "SPÓŁKA Z OGRANICZONĄ ODPOWIEDZIALNOŚCIĄ", "SP. Z O.O.", "SP. Z O. O.",
+            "SPÓŁKA AKCYJNA", "S.A.", "PROSTA SPÓŁKA AKCYJNA", "P.S.A.",
+            "SPÓŁKA KOMANDYTOWA", "SP. K."
+        ]
+
+        # 1. Czyszczenie nazwy głównej firmy
+        clean_company = company_name.upper()
+        for forma in formy_prawne:
+            clean_company = clean_company.replace(forma, "")
+        # Usunięcie podwójnych spacji
+        clean_company = " ".join(clean_company.split())
+        
+        # Budowa zapytania bazowego (np. "DIWISS" krypto)
+        search_query = f'"{clean_company}" krypto'
+        
+        # 2. Czyszczenie nazwy udziałowca (jeśli jest i nie jest zanonimizowany PESELem)
         if shareholder_name and "PESEL" not in shareholder_name:
-            clean_shareholder = shareholder_name.replace("SPÓŁKA Z OGRANICZONĄ ODPOWIEDZIALNOŚCIĄ", "").replace("LTD", "").replace("LIMITED", "").strip()
-            search_query += f' OR "{clean_shareholder}"'
+            clean_shareholder = shareholder_name.upper()
+            # Dla udziałowców dorzucamy jeszcze zagraniczne sufiksy
+            for forma in formy_prawne + ["LTD", "LIMITED", "LLC"]:
+                clean_shareholder = clean_shareholder.replace(forma, "")
+            clean_shareholder = " ".join(clean_shareholder.split())
+            
+            if clean_shareholder:
+                search_query += f' OR "{clean_shareholder}"'
 
         valid_links = []
-        # Lista słów kluczowych w URL, które chcemy ominąć
+        # Rozszerzona czarna lista domen (dodano tablicafirm)
         excluded_domains = [
             "krs", "aleo.com", "rejestr.io", "owg.pl", 
             "infoveriti", "biznes.gov.pl", "ceidg", 
-            "krs-online", "gowork", "panoramafirm"
+            "krs-online", "gowork", "panoramafirm",
+            "tablicafirm"
         ]
         
         try:
-            # Pobieramy 10 wyników, aby mieć z czego odrzucać
             results = list(
                 self.ddgs.text(
                     query=search_query,
@@ -65,7 +88,7 @@ class WebAnalyzer:
                     break
                     
         except Exception as e:
-            print(f"Błąd wyszukiwania dla {company_name}: {e}")
+            print(f"Błąd wyszukiwania dla {clean_company}: {e}")
             
         return valid_links
 
