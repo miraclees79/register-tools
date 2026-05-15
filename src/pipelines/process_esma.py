@@ -68,7 +68,19 @@ class EsmaApiEnricher:
         except Exception as e:
             print(f"Błąd API ESMA dla LEI {lei}: {e}")
             return ""
-
+            
+    async def fetch_all_classifications(self, leis: list[str]) -> dict:
+        """Pobiera klasyfikacje dla całej listy kodów LEI asynchronicznie."""
+        async with aiohttp.ClientSession() as session:
+            # Tworzymy listę zadań (tasks)
+            tasks =[self.fetch_entity_classification(session, lei) for lei in leis]
+            
+            # Używamy tqdm do paska postępu
+            responses = await tqdm.gather(*tasks, desc="Weryfikacja statusów w API ESMA")
+            
+            # Łączymy LEI z wynikami w słownik
+            return dict(zip(leis, responses))
+            
 def process_esma_data(df: pd.DataFrame, entity_types: dict) -> pd.DataFrame:
     """Przetwarza DataFrame, dodając nowe kolumny i flagi."""
     
@@ -129,7 +141,7 @@ async def run_esma_pipeline() -> None:
     leis_to_check = df_esma['ae_lei'].unique().tolist()
     
     # Zmieniona nazwa zmiennej na 'classifications' dla jasności
-    classifications = await enricher.fetch_entity_classification(leis=leis_to_check)
+    classifications = await enricher.fetch_all_classifications(leis=leis_to_check)
     
     # KROK 3: Przetwarzanie i zapis
     df_final = process_esma_data(df=df_esma, entity_types=classifications)
