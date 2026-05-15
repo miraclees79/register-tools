@@ -30,32 +30,39 @@ class BankingLicenseVerifier:
         self.ddgs = DDGS()
 
     def check_banking_license(self, company_name: str, lei: str, website: str, address: str) -> str:
-        """Weryfikuje licencję bankową przez wyszukiwarkę i LLM."""
-        query = f'Does the company "{company_name}" (LEI: {lei}) with website {website}, headquartered at "{address}" have a EU banking license?'
-        
+        query = f'Does company "{company_name}" (LEI: {lei}) have an EU banking license?'
+    
+        # 1. Pobranie wyników wyszukiwania (to robimy zawsze)
         try:
-            # Szukamy 3 wyników
             results = list(self.ddgs.text(query=query, region='pl-pl', max_results=3))
-            
-            # Budujemy kontekst dla LLM
             search_context = "\n".join([f"Source: {r.get('href')}\nText: {r.get('body')}" for r in results])
-            
-            prompt = f"""
-            Na podstawie wyników wyszukiwania, oceń czy podmiot: {company_name} (LEI: {lei}) posiada ważną licencję bankową (banking license) w Unii Europejskiej.
-            Wyniki wyszukiwania:
-            {search_context}
-            
-            Odpowiedz wyłącznie: "TAK", "NIE" lub "BRAK DANYCH". Jeśli "TAK", podaj krótko nazwę organu nadzorczego (np. Bafin, CSSF, KNF).
-            """
-            
-            response = gemini_client.models.generate_content(
-                model='gemma-4-31b-it',
-                contents=prompt
-            )
-            return response.text.strip()
-            
         except Exception as e:
-            return f"Error: {e}"
+            return f"Search Error: {e}"
+            
+        prompt = f"""
+        ROLE: Financial OSINT Analyst.
+        TASK: Determine if {company_name} (LEI: {lei}) has an EU banking license based on the context.
+        CONTEXT: {search_context}
+        OUTPUT: Provide "TAK [Authority Name]", "NIE", or "BRAK DANYCH". No other text.
+        """
+    
+        # 2. Próba z użyciem "Retry" i Fallbacku
+        models_to_try = ['gemma-4-31b-it', 'gemma-4-26b-a4b-it', 'gemini-3.1-flash-lite']
+    
+        for model_name in models_to_try:
+            try:
+                response = gemini_client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config={"temperature": 0.1} # Niska temperatura = mniej halucynacji
+                )
+                return response.text.strip()
+            except Exception:
+                print(f"Model {model_name} failed. Trying next...")
+                time.sleep(2) # Krótka pauza przed fallbackiem
+                continue
+            
+        return "Error: All models failed"
 
 class EsmaCsvExtractor:
     """Pobiera i wstępnie czyści dane CASP z pliku CSV od ESMA."""
