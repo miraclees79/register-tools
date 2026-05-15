@@ -25,7 +25,7 @@ class EsmaCsvExtractor:
             return df
         except Exception as e:
             raise ValueError(f"Błąd podczas pobierania lub przetwarzania CSV z ESMA: {e}")
-
+            
 class EsmaApiEnricher:
     """Wzbogaca dane o typ podmiotu na podstawie API ESMA."""
     
@@ -36,9 +36,11 @@ class EsmaApiEnricher:
         if not lei:
             return ""
         
-        # Zapytanie zgodne z dokumentacją API ESMA (szukamy po polu entity_code)
+        # ==========================================================
+        # POPRAWKA: Zmiana z 'entity_code' na standardowe 'LEI'
+        # ==========================================================
         params = {
-            'q': f'entity_code:"{lei}"',
+            'q': f'LEI:"{lei}"',
             'wt': 'json'
         }
         
@@ -48,7 +50,7 @@ class EsmaApiEnricher:
                     data = await response.json()
                     docs = data.get('response', {}).get('docs', [])
                     if docs:
-                        # Zgodnie z dokumentacją, typ podmiotu jest w polu 'entity_type'
+                        # Typ podmiotu jest w polu 'entity_type'
                         return docs[0].get('entity_type', 'Unknown')
                 return "Not Found"
         except Exception:
@@ -60,7 +62,6 @@ class EsmaApiEnricher:
         async with aiohttp.ClientSession() as session:
             tasks = [self.fetch_entity_type(session=session, lei=lei) for lei in leis]
             
-            # Używamy tqdm.gather do wyświetlania paska postępu dla zapytań asynchronicznych
             api_responses = await tqdm.gather(
                 *tasks, 
                 desc="Odpytywanie API ESMA"
