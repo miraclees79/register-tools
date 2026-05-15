@@ -46,7 +46,7 @@ class BankingLicenseVerifier:
         Wyniki wyszukiwania: {search_context}
         
         Zadanie:
-        1. Jeśli nazwa podmiotu zawiera "Bank" lub "Banco" i jest to znany podmiot, jest możliwe, że posiada licencję bankową.
+        1. Jeśli nazwa podmiotu zawiera "Bank" lub "Banco" lub podobną frazę w innym języku UE i jest to znany podmiot, jest możliwe, że posiada licencję bankową.
         2. Czy na podstawie kontekstu lub wiedzy ogólnej podmiot ten jest licencjonowanym bankiem w UE?
         3. Odpowiedz: "TAK [Nazwa Organu]" lub "NIE". Jeśli nie masz pewności, napisz "BRAK DANYCH".
         """    

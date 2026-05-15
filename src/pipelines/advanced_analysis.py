@@ -151,6 +151,7 @@ class WebAnalyzer:
         Twoje zadanie to odpowiedzieć zwięźle (max 3-4 zdania):
         1. Jaki jest główny profil działalności tej firmy?
         2. Czy kierują swoje usługi do klientów detalicznych (B2C) czy instytucjonalnych (B2B)?
+        3. Czy z informacji kontekstowych lub języka można określić czy kierują swoją ofertę do podmiotów z Polski, czy z innych krajów?
         Jeśli tekst to tylko szczątkowe informacje rejestrowe, napisz: "Brak wyraźnych informacji o profilu usług."
         """
         
