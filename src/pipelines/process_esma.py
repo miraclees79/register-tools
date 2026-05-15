@@ -162,18 +162,21 @@ def process_esma_data(df: pd.DataFrame, entity_types: dict) -> pd.DataFrame:
     df['ESMA - Typ Podmiotu'] = df['ae_lei'].map(entity_types).fillna('')
     
     # 4. Klasyfikacja
-    # Mapujemy kolumny na LISTY fraz (jeśli jest jedna fraza, też dajemy ją w nawiasach [])
+    # Mapujemy pozostałe kolumny na LISTY fraz
     klasyfikacja = {
-        "Bank": ["credit institution"],
         "FI": ["investment firm"],
         "Fiinfra": ["organised trading facility", "multilateral trading facility", "regulated market"],
         "AssetMgmt": ["aifm"]
-        }
+    }
 
+    # Specjalny warunek dla kolumny Bank - sprawdza kolumnę "Banking License Status"
+    # Używamy .str.contains('TAK', case=False) aby znaleźć "TAK" niezależnie od wielkości liter
+    df['Bank'] = df['Banking License Status'].str.contains('TAK', case=False, na=False).astype(int)
+
+    # Pozostałe klasyfikacje z kolumny "ESMA - Typ Podmiotu"
     for col_name, search_phrases in klasyfikacja.items():
-        # Używamy funkcji pomocniczej, która sprawdza czy jakakolwiek fraza z listy jest w tekście
         df[col_name] = df['ESMA - Typ Podmiotu'].str.lower().apply(
-        lambda x: 1 if any(phrase in str(x) for phrase in search_phrases) else 0
+            lambda x: 1 if any(phrase in str(x) for phrase in search_phrases) else 0
         )
         
     return df
@@ -196,8 +199,7 @@ async def run_esma_pipeline() -> None:
 
     
     
-    # KROK 3: Przetwarzanie i zapis
-    df_final = process_esma_data(df=df_esma, entity_types=classifications)
+    
 
     print("Weryfikacja licencji bankowych (to może zająć chwilę)...")
     verifier = BankingLicenseVerifier()
@@ -215,6 +217,9 @@ async def run_esma_pipeline() -> None:
         )
         df_final.at[index, 'Banking License Status'] = status
         time.sleep(4) # Rate limiting dla DDG
+    
+    # KROK 3: Przetwarzanie i zapis
+    df_final = process_esma_data(df=df_esma, entity_types=classifications)
     
     # Zapis
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
