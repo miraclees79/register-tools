@@ -79,31 +79,31 @@ class EbaPsdVerifier:
             with open(os.path.join(tmp_dir, json_files[0]), 'r', encoding='utf-8') as f:
                 raw_content = json.load(f)
                 
-                # --- POPRAWKA: Bezpieczne wyciąganie listy rekordów ---
-                if isinstance(raw_content, dict):
-                    # Jeśli JSON jest obiektem, szukamy w nim pierwszej lepszej listy
-                    # Często dane są pod kluczem 'entities', 'data' lub podobnym
-                    entities_list = []
+                # --- POPRAWKA DLA STRUKTURY LISTY LIST [[...], [...]] ---
+                entities_list = []
+                if isinstance(raw_content, list) and len(raw_content) > 1:
+                    # Z Twojego przykładu wynika, że indeks [0] to disclaimer, a [1] to dane
+                    if isinstance(raw_content[1], list):
+                        entities_list = raw_content[1]
+                elif isinstance(raw_content, list):
+                    entities_list = raw_content
+                elif isinstance(raw_content, dict):
+                    # Fallback dla innych wersji pliku
                     for val in raw_content.values():
                         if isinstance(val, list):
                             entities_list = val
                             break
-                    if not entities_list:
-                        print("Nie znaleziono listy rekordów wewnątrz obiektu JSON.")
-                        return
-                elif isinstance(raw_content, list):
-                    entities_list = raw_content
-                else:
-                    print("Nieobsługiwany format pliku JSON.")
+                
+                if not entities_list:
+                    print("Nie udało się zlokalizować listy rekordów w pliku JSON.")
                     return
 
                 # Przetwarzanie rekordów
                 for entry in entities_list:
-                    # Sprawdzamy czy entry jest słownikiem (zapobiega błędu 'list object has no attribute get')
                     if not isinstance(entry, dict):
                         continue
                         
-                    # Spłaszczanie Properties (lista słowników -> jeden słownik)
+                    # Spłaszczanie Properties
                     props_list = entry.get('Properties', [])
                     if not isinstance(props_list, list):
                         continue
@@ -111,20 +111,23 @@ class EbaPsdVerifier:
                     props = {}
                     for p in props_list:
                         if isinstance(p, dict) and p:
+                            # Wyciągamy klucz i wartość z pierwszego elementu słownika
                             k = list(p.keys())[0]
                             v = list(p.values())[0]
                             props[k] = v
                     
-                    self.psd_data.append({
-                        'name': str(props.get('ENT_NAM', '')).upper(),
-                        'address': str(props.get('ENT_ADD', '')).upper(),
-                        'type': entry.get('EntityType', ''),
-                        'auth': props.get('ENT_AUT', [])
-                    })
+                    # Dodajemy do bazy tylko jeśli mamy nazwę
+                    name = props.get('ENT_NAM')
+                    if name:
+                        self.psd_data.append({
+                            'name': str(name).upper(),
+                            'address': str(props.get('ENT_ADD', '')).upper(),
+                            'type': entry.get('EntityType', ''),
+                            'auth': props.get('ENT_AUT', [])
+                        })
             print(f"Wczytano {len(self.psd_data)} rekordów PSD/EMD.")
         except Exception as e:
             print(f"Błąd podczas przetwarzania danych PSD: {e}")
-            # Wypisz typ błędu dla łatwiejszej diagnozy
             print(f"Typ błędu: {type(e).__name__}")
         finally:
             if os.path.exists(tmp_dir): shutil.rmtree(tmp_dir)
@@ -138,10 +141,11 @@ class EbaPsdVerifier:
         best_match = None
 
         for record in self.psd_data:
-            # Token Set Ratio jest odporny na kolejność słów i dodatki typu "LTD"
+            # Token Set Ratio ignoruje kolejność słów i nadmiarowe człony
             score = fuzz.token_set_ratio(name_to_search, record['name'])
             
             if score > 85:
+                # Jeśli nazwa pasuje, sprawdzamy adres lub ekstremalnie wysoki score nazwy
                 if not addr_to_search or fuzz.partial_ratio(addr_to_search, record['address']) > 70 or score > 95:
                     best_score = score
                     best_match = record
@@ -150,6 +154,7 @@ class EbaPsdVerifier:
         if best_match:
             entity_type = best_match['type']
             auth_dates = best_match['auth']
+            # Jeśli w ENT_AUT są dwie daty -> licencja wycofana
             if isinstance(auth_dates, list) and len(auth_dates) >= 2:
                 return f"{entity_type} (Wycofana {auth_dates[1]})"
             return entity_type
