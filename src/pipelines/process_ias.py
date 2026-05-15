@@ -17,17 +17,17 @@ def run_pipeline():
     pdf_path = os.path.join(base_dir, "data", "raw", "ias_katowice.pdf")
     output_path = os.path.join(base_dir, "data", "processed", "enriched_crypto_register.csv")
 
-    print(f"1. Rozpoczęto analizę PDF: {pdf_path}")
+    print(f"1. Rozpoczęto analizę PDF: {pdf_path}", flush=True)
     extractor = IASPdfExtractor(pdf_path)
     df_raw = extractor.extract_table()
     df_cleaned = extractor.clean_krs_column(df_raw)
     
-    print(f"Wczytano {len(df_cleaned)} podmiotów.")
+    print(f"Wczytano {len(df_cleaned)} podmiotów.", flush=True)
     
     enricher = KrsApiEnricher()
     enriched_results =[]
 
-    print("2. Rozpoczęto pobieranie danych z KRS (to może potrwać)...")
+    print("2. Rozpoczęto pobieranie danych z KRS (to może potrwać)...", flush=True)
     for index, row in df_cleaned.iterrows():
         krs = row.get('clean_krs')
         nazwa = row.get(df_cleaned.columns[1], 'Nieznany') # Zakładam 2 kolumna to nazwa
@@ -42,7 +42,7 @@ def run_pipeline():
             row_dict = row.to_dict()
             row_dict.update(parsed_data)
             enriched_results.append(row_dict)
-            print(f"[OK] Pobrano dane dla KRS: {krs} ({nazwa})")
+            print(f"[OK] Pobrano dane dla KRS: {krs} ({nazwa})", flush=True)
         else:
             row_dict = row.to_dict()
             row_dict.update({
@@ -51,7 +51,7 @@ def run_pipeline():
             })
             enriched_results.append(row_dict)
 
-    print("3. Zapisywanie wyników...")
+    print("3. Zapisywanie wyników...", flush=True)
     df_final = pd.DataFrame(enriched_results)
     df_final.to_csv(output_path, index=False, encoding='utf-8')
     print(f"Sukces! Plik zapisany w: {output_path}")

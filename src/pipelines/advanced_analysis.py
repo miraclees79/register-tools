@@ -385,18 +385,22 @@ def run_advanced_pipeline(
     # aby mieć poprawne liczniki powiązań globalnych
 
     print("Analiza klastrów adresowych...")
-    df = analyze_address_clusters(df=df)
+    df_full = analyze_address_clusters(df=df_full)
     
-    df_filtered_addresses = df[df['najwiekszy_klaster_adresowy'] > 1]
+    df_filtered_addresses = df_full[df_full['najwiekszy_klaster_adresowy'] > 1]
     print(f"Znaleziono {len(df_filtered_addresses['krs_adres_aktualny'].unique())} klastrów adresowych.")
 
     print("Analiza powiązań udziałowców (kapitałowych)...")
-    df = analyze_shareholder_clusters(df=df)
+    df_full = analyze_shareholder_clusters(df=df_full)
     
     print("Analiza powiązań osób decyzyjnych (zarząd)...")
-    df = analyze_board_member_clusters(df=df)
-
-    print("Uruchamianie wyszukiwania i analizy LLM (to może potrwać)...")
+    df_full = analyze_board_member_clusters(df=df_full)
+    
+    # Następnie bierzemy tylko te wiersze, które należą do naszego shardu, 
+    # ale mają już przypisane globalne klastry
+    df = df_full.iloc[df.index].copy()
+    
+    print("Uruchamianie wyszukiwania i analizy LLM (to może potrwać)...", flush=True)
     analyzer = WebAnalyzer()
     
     df['website_url'] = ""
@@ -423,7 +427,7 @@ def run_advanced_pipeline(
 
         if not (is_active_ias and is_active_krs and not_liquidated):
             df.at[index, 'ai_summary'] = "Pominięto (podmiot nieaktywny, wykreślony lub zawieszony)."
-            print("Pominięto (nieaktywny).")
+            print("Pominięto (nieaktywny).", flush=True)
             continue
 
         main_shareholder = str(row.get('klaster_udzialowca_id', '')) 
@@ -452,14 +456,14 @@ def run_advanced_pipeline(
                 print("Sukces.")
             else:
                 df.at[index, 'ai_summary'] = "Nie udało się pobrać treści z żadnej ze znalezionych stron."
-                print("Błąd pobierania treści.")
+                print("Błąd pobierania treści." , flush=True)
         else:
             df.at[index, 'ai_summary'] = "Nie znaleziono odpowiednich stron (po odrzuceniu śmieciowych agregatorów KRS)."
-            print("Brak stron.")
+            print("Brak stron.", flush=True)
         
         time.sleep(4)
 
-    print(f"\nZapisywanie fragmentu: {output_path}...")
+    print(f"\nZapisywanie fragmentu: {output_path}...", flush=True)
     df.to_csv(
         path_or_buf=output_path, 
         index=False, 
