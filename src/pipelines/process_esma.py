@@ -21,7 +21,7 @@ if GEMINI_API_KEY:
         api_key=GEMINI_API_KEY
     )
     for m in gemini_client.models.list():
-    print(f"Model: {m.name}")
+        print(f"Model: {m.name}")
 else:
     print("Brak klucza GEMINI_API_KEY. LLM nie zadziała.")
     
