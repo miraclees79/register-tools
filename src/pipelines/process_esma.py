@@ -5,6 +5,38 @@ import aiohttp
 from tqdm.asyncio import tqdm
 import os
 
+class BankingLicenseVerifier:
+    def __init__(self):
+        self.ddgs = DDGS()
+
+    def check_banking_license(self, company_name: str, lei: str, website: str, address: str) -> str:
+        """Weryfikuje licencję bankową przez wyszukiwarkę i LLM."""
+        query = f'Does the company "{company_name}" (LEI: {lei}) with website {website}, headquartered at "{address}" have a EU banking license?'
+        
+        try:
+            # Szukamy 3 wyników
+            results = list(self.ddgs.text(query=query, region='pl-pl', max_results=3))
+            
+            # Budujemy kontekst dla LLM
+            search_context = "\n".join([f"Source: {r.get('href')}\nText: {r.get('body')}" for r in results])
+            
+            prompt = f"""
+            Na podstawie wyników wyszukiwania, oceń czy podmiot: {company_name} (LEI: {lei}) posiada ważną licencję bankową (banking license) w Unii Europejskiej.
+            Wyniki wyszukiwania:
+            {search_context}
+            
+            Odpowiedz wyłącznie: "TAK", "NIE" lub "BRAK DANYCH". Jeśli "TAK", podaj krótko nazwę organu nadzorczego (np. Bafin, CSSF, KNF).
+            """
+            
+            response = gemini_client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=prompt
+            )
+            return response.text.strip()
+            
+        except Exception as e:
+            return f"Error: {e}"
+
 class EsmaCsvExtractor:
     """Pobiera i wstępnie czyści dane CASP z pliku CSV od ESMA."""
     
@@ -142,9 +174,28 @@ async def run_esma_pipeline() -> None:
     
     # Zmieniona nazwa zmiennej na 'classifications' dla jasności
     classifications = await enricher.fetch_all_classifications(leis=leis_to_check)
+
+    
     
     # KROK 3: Przetwarzanie i zapis
     df_final = process_esma_data(df=df_esma, entity_types=classifications)
+
+    print("Weryfikacja licencji bankowych (to może zająć chwilę)...")
+    verifier = BankingLicenseVerifier()
+    
+    # Dodajemy kolumnę na wyniki
+    df_final['Banking License Status'] = ""
+    
+    # Testowo na 20 pierwszych dla oszczędności czasu
+    for index, row in tqdm(df_final.head(20).iterrows(), total=20, desc="Weryfikacja Banków"):
+        status = verifier.check_banking_license(
+            company_name=row['ae_lei_name'],
+            lei=row['ae_lei'],
+            website=row['ae_website'],
+            address=row['ae_address']
+        )
+        df_final.at[index, 'Banking License Status'] = status
+        time.sleep(4) # Rate limiting dla DDG
     
     # Zapis
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
