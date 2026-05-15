@@ -219,10 +219,35 @@ def analyze_shareholder_clusters(df: pd.DataFrame) -> pd.DataFrame:
         cleaned_set = set()
         for sh in sh_list:
             sh_str = str(sh).strip()
-            if sh_str and sh_str != "|":
-                sh_clean = sh_str.split('[')[0].strip()
-                if sh_clean:
-                    cleaned_set.add(sh_clean)
+            if not sh_str or sh_str == "|":
+                continue
+        
+            # 1. Usuwamy wszystko w nawiasach kwadratowych [...] 
+            # Używamy regexa, aby usunąć treść nawiasów wraz z samymi nawiasami
+            # np. "Firma [100 udziałów] [od 2021]" -> "Firma  "
+            sh_clean = re.sub(r'\[.*?\]', '', sh_str)
+        
+            # 2. Usuwamy nadmiarowe spacje powstałe po usunięciu nawiasów
+            sh_clean = " ".join(sh_clean.split()).strip()
+        
+            # 3. Opcjonalnie: Usuwamy formy prawne, aby "OVOO SP. Z O.O." i "OVOO" były tym samym
+            # Robimy to tylko jeśli w nazwie NIE MA PESEL-u (bo PESEL oznacza osobę fizyczną)
+            if "PESEL" not in sh_clean.upper():
+                formy_prawne = [
+                    "SPÓŁKA Z OGRANICZONĄ ODPOWIEDZIALNOŚCIĄ", "SP. Z O.O.", "SP. Z O. O.",
+                    "SPÓŁKA AKCYJNA", "S.A.", "PROSTA SPÓŁKA AKCYJNA", "P.S.A.",
+                    "SPÓŁKA KOMANDYTOWA", "SP. K.", "LTD", "LIMITED", "LLC"
+                ]
+                for forma in formy_prawne:
+                    # Case-insensitive replace
+                    pattern = re.compile(re.escape(forma), re.IGNORECASE)
+                    sh_clean = pattern.sub("", sh_clean)
+                sh_clean = " ".join(sh_clean.split()).strip()
+
+            # 4. Filtr bezpieczeństwa - ignorujemy puste stringi lub pojedyncze znaki
+            if len(sh_clean) > 1:
+                cleaned_set.add(sh_clean)
+            
         return list(cleaned_set)
         
     df['znormalizowani_udzialowcy'] = df['udzialowcy_lista'].apply(clean_shareholders)

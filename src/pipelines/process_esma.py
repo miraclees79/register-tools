@@ -23,35 +23,51 @@ else:
     print("Brak klucza GEMINI_API_KEY. LLM nie zadziała.")
 
 class SsmPdfVerifier:
-    """Wyciąga kody LEI z tabel w pliku PDF SSM."""
-    def __init__(self, pdf_path: str):
+    """Wyciąga kody LEI z pliku PDF SSM (Lista EBC)."""
+    
+    def __init__(
+        self, 
+        pdf_path: str
+    ):
         self.pdf_path = pdf_path
         self.lei_set = set()
 
-    def load_leis(self):
-        """Parsuje PDF i zbiera wszystkie kody LEI z drugiej kolumny tabel."""
-        if not os.path.exists(self.pdf_path):
+    def load_leis(self) -> None:
+        """Parsuje PDF i zbiera wszystkie kody LEI bezpośrednio z warstwy tekstowej."""
+        if not os.path.exists(path=self.pdf_path):
             print(f"⚠️ Plik PDF nie istnieje: {self.pdf_path}. Pomijam weryfikację PDF.")
             return
 
         print(f"Analiza pliku PDF: {self.pdf_path}...")
         try:
-            with pdfplumber.open(self.pdf_path) as pdf:
+            with pdfplumber.open(path=self.pdf_path) as pdf:
                 for page in pdf.pages:
-                    tables = page.extract_tables()
-                    for table in tables:
-                        for row in table:
-                            # Sprawdzamy czy wiersz ma co najmniej 2 kolumny
-                            if len(row) >= 2:
-                                lei_candidate = str(row[1]).strip() if row[1] else ""
-                                # Walidacja formatu LEI (20 znaków, cyfry i litery)
-                                if re.match(r'^[A-Z0-9]{20}$', lei_candidate):
-                                    self.lei_set.add(lei_candidate)
+                    # Pobieramy czysty tekst ze strony, ignorując całkowicie układ tabeli
+                    text = page.extract_text()
+                    
+                    if text:
+                        # Wyciągamy słowa o długości dokładnie 20 wielkich liter/cyfr
+                        # \b gwarantuje, że nie wytniemy 20 znaków ze środka dłuższego ciągu
+                        found_leis = re.findall(
+                            pattern=r'\b[A-Z0-9]{20}\b', 
+                            string=text
+                        )
+                        # Aktualizujemy unikalny zbiór o znalezione na stronie kody
+                        self.lei_set.update(found_leis)
+                        
             print(f"Wczytano {len(self.lei_set)} unikalnych kodów LEI z pliku PDF.")
+            
         except Exception as e:
             print(f"Błąd podczas odczytu PDF: {e}")
 
-    def is_lei_in_pdf(self, lei: str) -> bool:
+    def is_lei_in_pdf(
+        self, 
+        lei: str
+    ) -> bool:
+        """Weryfikuje, czy podany kod LEI znajduje się w pobranym zbiorze."""
+        if not lei:
+            return False
+            
         return lei.strip().upper() in self.lei_set
 
 class BankingLicenseVerifier:
