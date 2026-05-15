@@ -71,36 +71,40 @@ class EsmaApiEnricher:
                 
         return results
 
-def process_esma_data(df: pd.DataFrame, entity_types: dict) -> pd.DataFrame:
+def process_esma_data(
+    df: pd.DataFrame, 
+    entity_types: dict
+) -> pd.DataFrame:
     """Przetwarza DataFrame, dodając nowe kolumny i flagi."""
     
     # 1. Flaga "Działalność w Polsce?"
-    # Sprawdzamy, czy 'PL' jest w kolumnie ac_serviceCode_cou
     df['Działalność w Polsce?'] = df['ac_serviceCode_cou'].apply(
         lambda x: 'PRAWDA' if 'PL' in str(x).split('|') else 'FAŁSZ'
     )
     
     # 2. Kolumny 0/1 dla usług (od a. do j.)
     uslugi = {
-        "Usługi - a. custody": "a. providing custody",
-        "Usługi - b. trading platform": "b. operating a trading platform",
-        "Usługi - c. exchange CA for funds": "c. exchange of crypto-assets for funds",
-        "Usługi - d. exchange CA for CA": "d. exchange of crypto-assets for other crypto-assets",
-        "Usługi - e. order execution for clients": "e. execution of orders",
-        "Usługi - f. placing CA": "f. placing of crypto-assets",
-        "Usługi - g. reception and transmission orders for clients": "g. reception and transmission",
-        "Usługi - h. advice on CA": "h. providing advice",
-        "Usługi - i. portfolio mgmt": "i. providing portfolio management",
-        "Usługi - j. transfer of CA for clients": "j. providing transfer services"
+        "Usługi - a. custody": "providing custody",
+        "Usługi - b. trading platform": "operating a trading platform",
+        "Usługi - c. exchange CA for funds": "exchange of crypto-assets for funds",
+        "Usługi - d. exchange CA for CA": "exchange of crypto-assets for other crypto-assets",
+        "Usługi - e. order execution for clients": "execution of orders",
+        "Usługi - f. placing CA": "placing of crypto-assets",
+        "Usługi - g. reception and transmission orders for clients": "reception and transmission",
+        "Usługi - h. advice on CA": "providing advice",
+        "Usługi - i. portfolio mgmt": "providing portfolio management",
+        "Usługi - j. transfer of CA for clients": "providing transfer services"
     }
     
     for col_name, search_phrase in uslugi.items():
-        df[col_name] = df['ac_comments'].apply(
+        # POPRAWKA 1: Dodajemy .lower() aby wyszukiwanie było niewrażliwe na wielkość liter
+        df[col_name] = df['ac_comments'].str.lower().apply(
             lambda x: 1 if search_phrase in str(x) else 0
         )
         
     # 3. Mapowanie i flagowanie typów podmiotów z API
-    df['entity_type_raw'] = df['ae_lei'].map(entity_types)
+    # POPRAWKA 2: Zostawiamy surową kolumnę i nadajemy jej czytelną nazwę
+    df['ESMA - Typ Podmiotu'] = df['ae_lei'].map(entity_types)
     
     klasyfikacja = {
         "Bank": "Credit institution",
@@ -110,12 +114,10 @@ def process_esma_data(df: pd.DataFrame, entity_types: dict) -> pd.DataFrame:
     }
     
     for col_name, search_phrase in klasyfikacja.items():
-        df[col_name] = df['entity_type_raw'].apply(
+        df[col_name] = df['ESMA - Typ Podmiotu'].apply(
             lambda x: 1 if search_phrase in str(x) else 0
         )
         
-    df.drop(columns=['entity_type_raw'], inplace=True)
-    
     return df
 
 async def run_esma_pipeline() -> None:
