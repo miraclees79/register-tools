@@ -3,6 +3,7 @@ import time
 import pandas as pd
 import requests
 import re
+import sys
 from bs4 import BeautifulSoup
 from ddgs import DDGS
 from tqdm import tqdm
@@ -11,6 +12,8 @@ from google import genai  # Nowe, wspierane SDK Google
 # Inicjalizacja klienta Gemini
 GEMINI_API_KEY = os.getenv(key="GEMINI_API_KEY")
 gemini_client = None
+
+is_ci = os.getenv('CI') == 'true'
 
 if GEMINI_API_KEY:
     gemini_client = genai.Client(
@@ -339,7 +342,10 @@ def run_advanced_pipeline() -> None:
     df['ai_summary'] = ""
 
     # Używamy head(20) w celu puszczenia testu na 20 pierwszych podmiotach
-    for index, row in tqdm(iterable=df.head(20).iterrows(), total=20, desc="Analiza AI"):
+    for index, row in tqdm(iterable=df.head(20).iterrows(), 
+                        total=20, 
+                        desc="Analiza AI", 
+                        disable=is_ci):
         company_name = str(row['Imię i Nazwisko / Nazwa firmy'])
         company_address = str(row['krs_adres_aktualny'])
         # ==========================================

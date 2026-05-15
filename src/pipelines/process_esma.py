@@ -4,13 +4,14 @@ import asyncio
 import aiohttp
 from tqdm.asyncio import tqdm as async_tqdm
 import os
+import sys
 import re
 import time
 from bs4 import BeautifulSoup
 from ddgs import DDGS
 from tqdm import tqdm
 from google import genai  # Nowe, wspierane SDK Google
-
+is_ci = os.getenv('CI') == 'true'
 
 # Inicjalizacja klienta Gemini
 GEMINI_API_KEY = os.getenv(key="GEMINI_API_KEY")
@@ -222,7 +223,10 @@ async def run_esma_pipeline() -> None:
     df_final['Banking License Status'] = ""
     
     # Testowo na 20 pierwszych dla oszczędności czasu
-    for index, row in tqdm(df_final.head(20).iterrows(), total=20, desc="Weryfikacja Banków"):
+    for index, row in tqdm(df_final.head(20).iterrows(), 
+                        total=20, 
+                        desc="Weryfikacja Banków",
+                        disable=is_ci):
         try:
             status = verifier.check_banking_license(
                 company_name=row['ae_lei_name'],
