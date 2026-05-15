@@ -470,8 +470,8 @@ def run_advanced_pipeline(
         duration_row = end_time_row - start_time_row
     
         elapsed_total = end_time_row - start_time_global
-        avg_time_per_row = elapsed_total / index
-        remaining_rows = total - index
+        avg_time_per_row = elapsed_total / (index+1)
+        remaining_rows = total - (index+1)
         eta_seconds = remaining_rows * avg_time_per_row
     
         # Formatowanie czasów do czytelnej postaci HH:MM:SS
@@ -480,8 +480,8 @@ def run_advanced_pipeline(
 
         # 4. Rozbudowany log do konsoli GitHub Actions
         # Zawiera: postęp, nazwę, czas trwania wiersza, łączny czas i przewidywany koniec
-        print(f"[{index}/{total}] "
-              f"({(index/total)*100:.1f}%) "
+        print(f"[{index+1}/{total}] "
+              f"({((index+1)/total)*100:.1f}%) "
               f"| {company_name[:30].ljust(30)} "
               f"| Czas wiersza: {duration_row:5.2f}s "
               f"| Łącznie: {elapsed_str} "

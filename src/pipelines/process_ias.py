@@ -58,8 +58,8 @@ def run_pipeline():
             duration_row = end_time_row - start_time_row
     
             elapsed_total = end_time_row - start_time_global
-            avg_time_per_row = elapsed_total / index
-            remaining_rows = total - index
+            avg_time_per_row = elapsed_total / (index+1)
+            remaining_rows = total - (index+1)
             eta_seconds = remaining_rows * avg_time_per_row
     
             # Formatowanie czasów do czytelnej postaci HH:MM:SS
