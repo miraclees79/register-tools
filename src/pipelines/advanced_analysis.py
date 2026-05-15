@@ -9,6 +9,8 @@ from ddgs import DDGS
 from google import genai  # Nowe, wspierane SDK Google
 import argparse
 import numpy as np
+import time
+from datetime import timedelta
 
 # Inicjalizacja klienta Gemini
 GEMINI_API_KEY = os.getenv(key="GEMINI_API_KEY")
@@ -407,8 +409,11 @@ def run_advanced_pipeline(
     df['ai_summary'] = ""
 
     total = len(df)
-
+    
+    start_time_global = time.perf_counter()
+    
     for index, row in df.iterrows():
+        start_time_row = time.perf_counter()
         company_name = str(row['Imię i Nazwisko / Nazwa firmy'])
         company_address = str(row['krs_adres_aktualny'])
         
@@ -460,7 +465,28 @@ def run_advanced_pipeline(
         else:
             df.at[index, 'ai_summary'] = "Nie znaleziono odpowiednich stron (po odrzuceniu śmieciowych agregatorów KRS)."
             print("Brak stron.", flush=True)
-        
+        # 3. Obliczenia czasowe
+        end_time_row = time.perf_counter()
+        duration_row = end_time_row - start_time_row
+    
+        elapsed_total = end_time_row - start_time_global
+        avg_time_per_row = elapsed_total / index
+        remaining_rows = total - index
+        eta_seconds = remaining_rows * avg_time_per_row
+    
+        # Formatowanie czasów do czytelnej postaci HH:MM:SS
+        elapsed_str = str(timedelta(seconds=int(elapsed_total)))
+        eta_str = str(timedelta(seconds=int(eta_seconds)))
+
+        # 4. Rozbudowany log do konsoli GitHub Actions
+        # Zawiera: postęp, nazwę, czas trwania wiersza, łączny czas i przewidywany koniec
+        print(f"[{index}/{total}] "
+              f"({(index/total)*100:.1f}%) "
+              f"| {company_name[:30].ljust(30)} "
+              f"| Czas wiersza: {duration_row:5.2f}s "
+              f"| Łącznie: {elapsed_str} "
+              f"| ETA: {eta_str} ",
+              flush=True)
         time.sleep(4)
 
     print(f"\nZapisywanie fragmentu: {output_path}...", flush=True)
@@ -469,7 +495,9 @@ def run_advanced_pipeline(
         index=False, 
         encoding='utf-8'
     )
-    print(f"Zakończono pomyślnie przebieg na shardzie {shard_index} zawierającym {total} podmiotów!")
+    total_duration = str(timedelta(seconds=int(time.perf_counter() - start_time_global)))
+    print(f"\n✅ Zakończono Shard {shard_index} zawierający {total} podmiotów Całkowity czas pracy: {total_duration}", flush=True)
+    
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
