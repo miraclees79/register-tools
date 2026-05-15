@@ -127,19 +127,15 @@ class WebAnalyzer:
         
         try:
             response = gemini_client.models.generate_content(
-                model='gemini-2.5-flash', # Zaktualizowany, działający model
+                model='gemini-2.5-flash',
                 contents=prompt
             )
             if response.text:
-                return response.text.replace(
-                    old='\n', 
-                    new=' '
-                ).strip()
+                # Usunięto argumenty nazwane old= i new=
+                return response.text.replace('\n', ' ').strip()
             return "Brak odpowiedzi modelu."
         except Exception as e:
             return f"Błąd LLM: {str(e)}"
-
-
 
 
 def analyze_address_clusters(
