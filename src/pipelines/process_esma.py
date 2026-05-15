@@ -5,6 +5,7 @@ import aiohttp
 from tqdm.asyncio import tqdm as async_tqdm
 import os
 import re
+import time
 from bs4 import BeautifulSoup
 from ddgs import DDGS
 from tqdm import tqdm
