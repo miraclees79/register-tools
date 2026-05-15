@@ -20,6 +20,8 @@ if GEMINI_API_KEY:
     gemini_client = genai.Client(
         api_key=GEMINI_API_KEY
     )
+    for m in gemini_client.models.list():
+    print(f"Model: {m.name}")
 else:
     print("Brak klucza GEMINI_API_KEY. LLM nie zadziała.")
     
@@ -47,7 +49,7 @@ class BankingLicenseVerifier:
             """
             
             response = gemini_client.models.generate_content(
-                model='gemini 3.1 flash lite',
+                model='gemini-3.1-flash-lite',
                 contents=prompt
             )
             return response.text.strip()
