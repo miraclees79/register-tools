@@ -79,16 +79,13 @@ class EbaPsdVerifier:
             with open(os.path.join(tmp_dir, json_files[0]), 'r', encoding='utf-8') as f:
                 raw_content = json.load(f)
                 
-                # --- POPRAWKA DLA STRUKTURY LISTY LIST [[...], [...]] ---
                 entities_list = []
                 if isinstance(raw_content, list) and len(raw_content) > 1:
-                    # Z Twojego przykładu wynika, że indeks [0] to disclaimer, a [1] to dane
                     if isinstance(raw_content[1], list):
                         entities_list = raw_content[1]
                 elif isinstance(raw_content, list):
                     entities_list = raw_content
                 elif isinstance(raw_content, dict):
-                    # Fallback dla innych wersji pliku
                     for val in raw_content.values():
                         if isinstance(val, list):
                             entities_list = val
@@ -98,12 +95,10 @@ class EbaPsdVerifier:
                     print("Nie udało się zlokalizować listy rekordów w pliku JSON.")
                     return
 
-                # Przetwarzanie rekordów
                 for entry in entities_list:
                     if not isinstance(entry, dict):
                         continue
                         
-                    # Spłaszczanie Properties
                     props_list = entry.get('Properties', [])
                     if not isinstance(props_list, list):
                         continue
@@ -111,41 +106,45 @@ class EbaPsdVerifier:
                     props = {}
                     for p in props_list:
                         if isinstance(p, dict) and p:
-                            # Wyciągamy klucz i wartość z pierwszego elementu słownika
                             k = list(p.keys())[0]
                             v = list(p.values())[0]
                             props[k] = v
                     
-                    # Dodajemy do bazy tylko jeśli mamy nazwę
                     name = props.get('ENT_NAM')
                     if name:
                         self.psd_data.append({
                             'name': str(name).upper(),
                             'address': str(props.get('ENT_ADD', '')).upper(),
+                            'country': str(props.get('ENT_COU_RES', '')).upper(), # <--- DODANO KRAJ
                             'type': entry.get('EntityType', ''),
                             'auth': props.get('ENT_AUT', [])
                         })
             print(f"Wczytano {len(self.psd_data)} rekordów PSD/EMD.")
         except Exception as e:
             print(f"Błąd podczas przetwarzania danych PSD: {e}")
-            print(f"Typ błędu: {type(e).__name__}")
         finally:
             if os.path.exists(tmp_dir): shutil.rmtree(tmp_dir)
 
-    def find_match(self, company_name: str, address: str) -> str:
-        """Próbuje dopasować nazwę firmy do bazy PSD za pomocą Fuzzy Matching."""
+    def find_match(self, company_name: str, address: str, country_code: str) -> str:
+        """Próbuje dopasować nazwę firmy do bazy PSD z wymogiem zgodności kraju."""
         name_to_search = str(company_name).upper()
         addr_to_search = str(address).upper()
+        country_to_search = str(country_code).strip().upper()
         
         best_score = 0
         best_match = None
 
         for record in self.psd_data:
-            # Token Set Ratio ignoruje kolejność słów i nadmiarowe człony
+            # --- NOWY WARUNEK: Zgodność Kraju ---
+            # Jeśli kraj w bazie EBA jest różny od kraju z ESMA, pomijamy ten rekord
+            if record['country'] != country_to_search:
+                continue
+            
+            # Porównujemy nazwy
             score = fuzz.token_set_ratio(name_to_search, record['name'])
             
             if score > 85:
-                # Jeśli nazwa pasuje, sprawdzamy adres lub ekstremalnie wysoki score nazwy
+                # Weryfikacja adresu lub bardzo wysoki score nazwy
                 if not addr_to_search or fuzz.partial_ratio(addr_to_search, record['address']) > 70 or score > 95:
                     best_score = score
                     best_match = record
@@ -154,7 +153,6 @@ class EbaPsdVerifier:
         if best_match:
             entity_type = best_match['type']
             auth_dates = best_match['auth']
-            # Jeśli w ENT_AUT są dwie daty -> licencja wycofana
             if isinstance(auth_dates, list) and len(auth_dates) >= 2:
                 return f"{entity_type} (Wycofana {auth_dates[1]})"
             return entity_type
@@ -286,7 +284,12 @@ async def run_esma_pipeline() -> None:
         
         # 2. Weryfikacja PSD/EMD (Tylko jeśli nie jest bankiem)
         if "TAK" not in status.upper():
-            psd_status = psd_verifier.find_match(company_name, row['ae_address'])
+            # Przekazujemy teraz również country_code do find_match
+            psd_status = psd_verifier.find_match(
+                company_name=company_name, 
+                address=row['ae_address'], 
+                country_code=country_code # <--- DODANO ARGUMENT
+            )
             df_final.at[index, 'PSD status'] = psd_status
         
         print(f"Bank: {status} | PSD: {df_final.at[index, 'PSD status']}")
