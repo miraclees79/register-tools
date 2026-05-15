@@ -99,7 +99,7 @@ def process_esma_data(
     
     for col_name, search_phrase in uslugi.items():
         # POPRAWKA 1: Dodajemy .lower() aby wyszukiwanie było niewrażliwe na wielkość liter
-        df[col_name] = df['ac_comments'].str.lower().apply(
+        df[col_name] = df['ac_serviceCode'].str.lower().apply(
             lambda x: 1 if search_phrase in str(x) else 0
         )
         
