@@ -140,20 +140,28 @@ class WebAnalyzer:
             return "Brak zawartości strony do analizy."
 
         prompt = f"""
-        Jesteś analitykiem finansowym (OSINT) badającym rynek kryptowalut.
-        Poniżej znajduje się tekst z maksymalnie 3 najlepszych stron WWW powiązanych z podmiotem (VASP).
-        Nazwa podmiotu: {company_name}
-        Adres siedziby: {company_address}
-        
-        Tekst ze stron:
+        Jesteś ekspertem OSINT i analitykiem AML/KYC specjalizującym się w sektorze kryptowalut (VASP).
+        Twoim celem jest analiza treści stron internetowych w celu określenia realnego profilu działalności firmy.
+
+        PODMIOT DO ANALIZY:
+        Nazwa: {company_name}
+        Adres: {company_address}
+
+        TREŚĆ ZE STRON:
         {website_text}
-        
-        Twoje zadanie to odpowiedzieć zwięźle (max 3-4 zdania):
-        1. Jaki jest główny profil działalności tej firmy?
-        2. Czy kierują swoje usługi do klientów detalicznych (B2C) czy instytucjonalnych (B2B)?
-        3. Czy z informacji kontekstowych lub języka można określić czy kierują swoją ofertę do podmiotów z Polski, czy z innych krajów?
-        Jeśli tekst to tylko szczątkowe informacje rejestrowe, napisz: "Brak wyraźnych informacji o profilu usług."
-        """
+
+        ZADANIE:
+        Na podstawie wyłącznie dostarczonego tekstu, odpowiedz na poniższe pytania. Jeśli informacji nie ma w tekście, napisz "Brak danych".
+
+        1. Profil działalności: (Czym firma zajmuje się w praktyce? Np. giełda, portfel, doradztwo, mining).
+        2. Model klienta: (B2C, B2B czy oba? Podaj krótki dowód z tekstu).
+        3. Rynek docelowy: (Polska, Globalnie czy konkretne kraje? Na podstawie języka i treści).
+
+        ZASADY:
+        - Bądź maksymalnie zwięzły (łącznie max 4 zdania).
+        - Nie używaj zwrotów typu "Na podstawie dostarczonego tekstu..." lub "Wydaje się, że...".
+        - Jeśli tekst zawiera tylko dane rejestrowe (NIP, KRS, adres), odpowiedz: "Brak wyraźnych informacji o profilu usług."
+"""     
         
         # Lista modeli: najpierw próbujemy potężną Gemmę, potem stabilny Flash
         models_to_try =['gemma-4-26b-a4b-it', 'gemma-4-31b-it', 'gemini-3.1-flash-lite']

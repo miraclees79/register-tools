@@ -41,15 +41,30 @@ class BankingLicenseVerifier:
             return f"Search Error: {e}"
 
         prompt = f"""
-        Jesteś ekspertem ds. regulacji bankowych w UE.
-        Podmiot: {company_name} (LEI: {lei}), website: {website} siedziba: {address}
-        Wyniki wyszukiwania: {search_context}
-        
-        Zadanie:
-        1. Jeśli nazwa podmiotu zawiera "Bank" lub "Banco" lub podobną frazę w innym języku UE i jest to znany podmiot, jest możliwe, że posiada licencję bankową.
-        2. Czy na podstawie kontekstu lub wiedzy ogólnej podmiot ten jest licencjonowanym bankiem w UE?
-        3. Odpowiedz: "TAK [Nazwa Organu]" lub "NIE". Jeśli nie masz pewności, napisz "BRAK DANYCH".
-        """    
+        Jesteś ekspertem ds. regulacji bankowych w UE i specjalistą Compliance.
+        Twoim zadaniem jest weryfikacja statusu licencji bankowej podmiotu.
+
+        DANE PODMIOTU:
+        - Nazwa: {company_name}
+        - LEI: {lei}
+        - Website: {website}
+        - Siedziba: {address}
+
+        KONTEKST Z WYSZUKIWARKI:
+        {search_context}
+
+        ZADANIE:
+        1. Przeanalizuj dostarczony KONTEKST pod kątem informacji o posiadanej licencji bankowej w UE.
+        2. Jeśli w kontekście nie ma jednoznacznej odpowiedzi, sprawdź czy podmiot jest powszechnie znanym bankiem z aktywną licencją (użyj wiedzy wewnętrznej jako uzupełnienia).
+        3. Jeśli nazwa zawiera "Bank/Banco", ale kontekst wskazuje na działalność doradczą lub inwestycyjną bez licencji depozytowej, odpowiedz "NIE".
+
+        FORMAT ODPOWIEDZI:
+        - Jeśli podmiot posiada licencję: "TAK [Nazwa Organu Nadzorczego, np. KNF, ECB, BaFin]"
+        - Jeśli podmiot na pewno nie posiada licencji: "NIE"
+        - Jeśli nie można jednoznacznie stwierdzić na podstawie danych: "BRAK DANYCH"
+
+            Odpowiedz wyłącznie w powyższym formacie.
+        """ 
         
     
         # 2. Próba z użyciem "Retry" i Fallbacku
