@@ -160,18 +160,19 @@ def process_esma_data(df: pd.DataFrame, entity_types: dict) -> pd.DataFrame:
     # 3. Mapowanie typu podmiotu z API
     df['ESMA - Typ Podmiotu'] = df['ae_lei'].map(entity_types).fillna('')
     
-    # 4. Klasyfikacja - szukamy w nowym polu 'ae_entityTypeLabel' (które teraz jest w kolumnie ESMA - Typ Podmiotu)
-    # Mapujemy wartości z ESMA na Twoje kolumny
+    # 4. Klasyfikacja
+    # Mapujemy kolumny na LISTY fraz (jeśli jest jedna fraza, też dajemy ją w nawiasach [])
     klasyfikacja = {
-        "Bank": "credit institution",
-        "FI": "investment firm",
-        "Fiinfra": "financial infrastructure",
-        "AssetMgmt": "asset management"
-    }
-    
-    for col_name, search_phrase in klasyfikacja.items():
+        "Bank": ["credit institution"],
+        "FI": ["investment firm"],
+        "Fiinfra": ["organised trading facility", "multilateral trading facility", "regulated market"],
+        "AssetMgmt": ["aifm"]
+        }
+
+    for col_name, search_phrases in klasyfikacja.items():
+        # Używamy funkcji pomocniczej, która sprawdza czy jakakolwiek fraza z listy jest w tekście
         df[col_name] = df['ESMA - Typ Podmiotu'].str.lower().apply(
-            lambda x: 1 if search_phrase in x else 0
+        lambda x: 1 if any(phrase in str(x) for phrase in search_phrases) else 0
         )
         
     return df
