@@ -4,6 +4,11 @@ import asyncio
 import aiohttp
 from tqdm.asyncio import tqdm
 import os
+import re
+from bs4 import BeautifulSoup
+from ddgs import DDGS
+from tqdm import tqdm
+from google import genai  # Nowe, wspierane SDK Google
 
 class BankingLicenseVerifier:
     def __init__(self):
