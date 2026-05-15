@@ -10,6 +10,18 @@ from ddgs import DDGS
 from tqdm import tqdm
 from google import genai  # Nowe, wspierane SDK Google
 
+
+# Inicjalizacja klienta Gemini
+GEMINI_API_KEY = os.getenv(key="GEMINI_API_KEY")
+gemini_client = None
+
+if GEMINI_API_KEY:
+    gemini_client = genai.Client(
+        api_key=GEMINI_API_KEY
+    )
+else:
+    print("Brak klucza GEMINI_API_KEY. LLM nie zadziała.")
+    
 class BankingLicenseVerifier:
     def __init__(self):
         self.ddgs = DDGS()
