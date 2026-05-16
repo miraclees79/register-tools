@@ -416,7 +416,7 @@ def run_advanced_pipeline(
         company_address = str(row['krs_adres_aktualny'])
         
         # Logowanie postępu bez tqdm (czyste linie w GH Actions)
-        print(f"[{index+1}/{total_rows}] Analiza: {company_name[:50]}...", end=" ", flush=True)
+        print(f"[{index+1-start_idx}/{total_rows}] Analiza: {company_name[:50]}...", end=" ", flush=True)
 
         # FILTROWANIE PODMIOTÓW AKTYWNYCH
         zawieszenie_ias = str(row.get('Informacja o zawieszeniu działalności', '')).strip().lower()
@@ -468,8 +468,8 @@ def run_advanced_pipeline(
         duration_row = end_time_row - start_time_row
     
         elapsed_total = end_time_row - start_time_global
-        avg_time_per_row = elapsed_total / (index+1)
-        remaining_rows = total_rows - (index+1)
+        avg_time_per_row = elapsed_total / (index+1-start_idx)
+        remaining_rows = total_rows - (index+1-start_idx)
         eta_seconds = remaining_rows * avg_time_per_row
     
         # Formatowanie czasów do czytelnej postaci HH:MM:SS
@@ -478,8 +478,8 @@ def run_advanced_pipeline(
 
         # 4. Rozbudowany log do konsoli GitHub Actions
         # Zawiera: postęp, nazwę, czas trwania wiersza, łączny czas i przewidywany koniec
-        print(f"[{index+1}/{total_rows}] "
-              f"({((index+1)/total_rows)*100:.1f}%) "
+        print(f"[{index+1-start_idx}/{total_rows}] "
+              f"({((index+1-start_idx)/total_rows)*100:.1f}%) "
               f"| {company_name[:30].ljust(30)} "
               f"| Czas wiersza: {duration_row:5.2f}s "
               f"| Łącznie: {elapsed_str} "
