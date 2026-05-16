@@ -431,6 +431,24 @@ def run_advanced_pipeline(
         if not (is_active_ias and is_active_krs and not_liquidated):
             df.at[index, 'ai_summary'] = "Pominięto (podmiot nieaktywny, wykreślony lub zawieszony)."
             print("Pominięto (nieaktywny).", flush=True)
+            end_time_row = time.perf_counter()
+            duration_row = end_time_row - start_time_row
+        
+            elapsed_total = end_time_row - start_time_global
+            avg_time_per_row = elapsed_total / (index+1-start_idx)
+            remaining_rows = total_rows - (index+1-start_idx)
+            eta_seconds = remaining_rows * avg_time_per_row
+        
+            # Formatowanie czasów do czytelnej postaci HH:MM:SS
+            elapsed_str = str(timedelta(seconds=int(elapsed_total)))
+            eta_str = str(timedelta(seconds=int(eta_seconds)))
+            print(f"[{index+1-start_idx}/{total_rows}] "
+                  f"({((index+1-start_idx)/total_rows)*100:.1f}%) "
+                  f"| {company_name[:30].ljust(30)} "
+                  f"| Czas wiersza: {duration_row:5.2f}s "
+                  f"| Łącznie: {elapsed_str} "
+                  f"| ETA: {eta_str} ",
+                  flush=True)
             continue
 
         main_shareholder = str(row.get('klaster_udzialowca_id', '')) 
