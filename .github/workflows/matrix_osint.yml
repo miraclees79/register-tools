@@ -2,38 +2,51 @@ name: Matrix OSINT Crypto Analysis
 
 on:
   workflow_dispatch:
+    inputs:
+      run_etl_phase:
+        description: 'Uruchom pełny ETL (PDF+KRS)?'
+        required: true
+        default: false
+        type: boolean
 
 jobs:
   # FAZA 1: Przygotowanie danych (ETL)
   prepare:
     runs-on: ubuntu-latest
-    outputs:
-      matrix_config: ${{ steps.set-matrix.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-      - name: Run ETL
+
+      # KROK: Uruchom ETL tylko jeśli zaznaczono opcję
+      - name: Run ETL if selected
+        if: ${{ github.event.inputs.run_etl_phase == 'true' }}
+        run: |
+          pip install -r requirements.txt
+          python src/pipelines/process_ias.py
         env:
           PYTHONPATH: .
-        run: python src/pipelines/process_ias.py
+
+      # KROK: Przygotuj plik bazowy jako artefakt
       - name: Upload Enriched Data
         uses: actions/upload-artifact@v4
         with:
           name: enriched-base
           path: data/processed/enriched_crypto_register.csv
+          # Zapewnij, że artefakt będzie dostępny nawet jeśli plik już istniał
+          if-no-files-found: error
 
   # FAZA 2: Macierzowe przetwarzanie LLM
   osint-analysis:
     needs: prepare
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: false # Jeśli jeden shard padnie, reszta ma pracować dalej
+      fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6] # 7 runnerów
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -52,7 +65,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           PYTHONUNBUFFERED: "1"
         run: |
-          python src/pipelines/advanced_analysis.py --shard-index ${{ matrix.shard }} --total-shards 7
+          python src/pipelines/advanced_analysis.py --shard-index ${{ matrix.shard }} --total-shards 10
       - name: Upload Shard Result
         uses: actions/upload-artifact@v4
         with:
@@ -85,7 +98,9 @@ jobs:
           import glob
           import os
           files = glob.glob("data/shards/osint_shard_*.csv")
-          # Sortowanie plików, aby zachować kolejność shardy 0-6
+          if not files:
+              print("Brak plików do połączenia. Kończę pracę.")
+              exit(0)
           files.sort()
           df_list = [pd.read_csv(f) for f in files]
           final_df = pd.concat(df_list)

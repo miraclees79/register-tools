@@ -1,4 +1,5 @@
 import os
+import math
 import time
 import pandas as pd
 import requests
@@ -362,7 +363,6 @@ def run_advanced_pipeline(
         "processed", 
         "enriched_crypto_register.csv"
     )
-    # Każdy shard zapisuje własny, unikalny plik
     output_path = os.path.join(
         base_dir, 
         "data", 
@@ -373,52 +373,50 @@ def run_advanced_pipeline(
     print(f"Wczytywanie bazy dla shardu {shard_index}/{total_shards}...")
     df_full = pd.read_csv(filepath_or_buffer=input_path)
 
-    # --- LOGIKA SHADINGU ---
-    # Dzielimy pełny DataFrame na N części
-    shards = np.array_split(
-        ary=df_full, 
-        indices_or_sections=total_shards
-    )
-    df = shards[shard_index].copy()
-    
-    print(f"Shard {shard_index} przetworzy {len(df)} wierszy.")
-
-    # Analizy klastrowe wykonujemy na pełnym zbiorze, 
-    # aby mieć poprawne liczniki powiązań globalnych
-
+    # =========================================================
+    # KROK 1: Analizy globalne (na pełnym zbiorze df_full)
+    # =========================================================
     print("Analiza klastrów adresowych...")
     df_full = analyze_address_clusters(df=df_full)
     
-    df_filtered_addresses = df_full[df_full['najwiekszy_klaster_adresowy'] > 1]
-    print(f"Znaleziono {len(df_filtered_addresses['krs_adres_aktualny'].unique())} klastrów adresowych.")
-
     print("Analiza powiązań udziałowców (kapitałowych)...")
     df_full = analyze_shareholder_clusters(df=df_full)
     
     print("Analiza powiązań osób decyzyjnych (zarząd)...")
     df_full = analyze_board_member_clusters(df=df_full)
+
+    # =========================================================
+    # KROK 2: Bezpieczny Sharding (cięcie po analizach)
+    # =========================================================
+    chunk_size = math.ceil(len(df_full) / total_shards)
+    start_idx = shard_index * chunk_size
+    end_idx = start_idx + chunk_size
     
-    # Następnie bierzemy tylko te wiersze, które należą do naszego shardu, 
-    # ale mają już przypisane globalne klastry
-    df = df_full.iloc[df.index].copy()
+    # Wycinamy nasz fragment używając czystego Pandasa
+    df = df_full.iloc[start_idx:end_idx].copy()
     
-    print("Uruchamianie wyszukiwania i analizy LLM (to może potrwać)...", flush=True)
+    print(f"Shard {shard_index} przetworzy wiersze od {start_idx} do min({end_idx-1}, {len(df_full)-1}) (łącznie: {len(df)} podmiotów).")
+
+    # =========================================================
+    # KROK 3: Uruchomienie analizy LLM (na wyciętym zbiorze 'df')
+    # =========================================================
+    print("Uruchamianie wyszukiwania i analizy LLM...")
     analyzer = WebAnalyzer()
     
     df['website_url'] = ""
     df['ai_summary'] = ""
 
-    total = len(df)
-    
+    total_rows = len(df)
     start_time_global = time.perf_counter()
-    
-    for index, row in df.iterrows():
+
+    # Zastąpiona pętla z enumerate (bez tqdm) tak jak prosileś wcześniej
+    for current_row, (index, row) in enumerate(df.iterrows(), start=1):
         start_time_row = time.perf_counter()
         company_name = str(row['Imię i Nazwisko / Nazwa firmy'])
         company_address = str(row['krs_adres_aktualny'])
         
         # Logowanie postępu bez tqdm (czyste linie w GH Actions)
-        print(f"[{index+1}/{total}] Analiza: {company_name[:50]}...", end=" ", flush=True)
+        print(f"[{index+1}/{total_rows}] Analiza: {company_name[:50]}...", end=" ", flush=True)
 
         # FILTROWANIE PODMIOTÓW AKTYWNYCH
         zawieszenie_ias = str(row.get('Informacja o zawieszeniu działalności', '')).strip().lower()
@@ -471,7 +469,7 @@ def run_advanced_pipeline(
     
         elapsed_total = end_time_row - start_time_global
         avg_time_per_row = elapsed_total / (index+1)
-        remaining_rows = total - (index+1)
+        remaining_rows = total_rows - (index+1)
         eta_seconds = remaining_rows * avg_time_per_row
     
         # Formatowanie czasów do czytelnej postaci HH:MM:SS
@@ -480,8 +478,8 @@ def run_advanced_pipeline(
 
         # 4. Rozbudowany log do konsoli GitHub Actions
         # Zawiera: postęp, nazwę, czas trwania wiersza, łączny czas i przewidywany koniec
-        print(f"[{index+1}/{total}] "
-              f"({((index+1)/total)*100:.1f}%) "
+        print(f"[{index+1}/{total_rows}] "
+              f"({((index+1)/total_rows)*100:.1f}%) "
               f"| {company_name[:30].ljust(30)} "
               f"| Czas wiersza: {duration_row:5.2f}s "
               f"| Łącznie: {elapsed_str} "
@@ -496,7 +494,7 @@ def run_advanced_pipeline(
         encoding='utf-8'
     )
     total_duration = str(timedelta(seconds=int(time.perf_counter() - start_time_global)))
-    print(f"\n✅ Zakończono Shard {shard_index} zawierający {total} podmiotów Całkowity czas pracy: {total_duration}", flush=True)
+    print(f"\n✅ Zakończono Shard {shard_index} zawierający {total_rows} podmiotów Całkowity czas pracy: {total_duration}", flush=True)
     
 
 if __name__ == "__main__":
