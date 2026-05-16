@@ -84,7 +84,7 @@ class WebAnalyzer:
                     continue
                 if href:
                     valid_links.append(res.get('href', ''))
-                if len(valid_links) == 3:
+                if len(valid_links) == 10:
                     break
         except Exception as e:
             print(f"Błąd wyszukiwania dla {clean_company}: {e}")
